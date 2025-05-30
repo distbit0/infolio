@@ -67,25 +67,25 @@ def save_webpage_as_mhtml(url, timeout=10, min_load_time=5):
     chrome_options.add_argument("--headless")
     driver = webdriver.Chrome(options=chrome_options)
 
-    try:
-        start_time = time.time()
-        driver.get(url)
-        wait = WebDriverWait(driver, timeout)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        body_load_time = time.time() - start_time
-        remaining_time = max(0, min_load_time - body_load_time)
-        time.sleep(remaining_time)
+    # try:
+    start_time = time.time()
+    driver.get(url)
+    wait = WebDriverWait(driver, timeout)
+    wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+    body_load_time = time.time() - start_time
+    remaining_time = max(0, min_load_time - body_load_time)
+    time.sleep(remaining_time)
 
-        title = driver.title
-        title = "".join(c for c in title if c.isalnum() or c.isspace()).rstrip()
+    title = driver.title
+    title = "".join(c for c in title if c.isalnum() or c.isspace()).rstrip()
 
-        driver.execute_cdp_cmd("Page.captureSnapshot", {"format": "mhtml"})
-        mhtml_data = driver.execute_cdp_cmd(
-            "Page.captureSnapshot", {"format": "mhtml"}
-        )["data"]
+    driver.execute_cdp_cmd("Page.captureSnapshot", {"format": "mhtml"})
+    mhtml_data = driver.execute_cdp_cmd(
+        "Page.captureSnapshot", {"format": "mhtml"}
+    )["data"]
 
-    finally:
-        driver.quit()
+    # finally:
+    #     driver.quit()
 
     return mhtml_data, title
 

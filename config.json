@@ -77,7 +77,9 @@
             "use_summary": true
         },
         "futarchy": {
-            "any_tags": ["infofi"],
+            "any_tags": [
+                "infofi"
+            ],
             "description": "About futarchy or decision markets",
             "use_summary": true
         },
@@ -85,8 +87,12 @@
             "description": "about using technology to improve epistemics, decision making, knowledge acquisition, truth discovery etc. e.g. via knowledge graphs, incentives or any other mechanism",
             "use_summary": true
         },
-        "instofailures": {
-            "description": "about any major failure/error/misallocation which could have been easily avoided with the right information which was available at the time",
+        "creativity": {
+            "description": "about how to formalise or otherwise better understand what constitutes creativity, novelty, knowledge or open endedness",
+            "use_summary": true
+        },
+        "convoStarters": {
+            "description": "about good questions which you can ask in conversations, or other settings",
             "use_summary": true
         }
     },
@@ -114,6 +120,19 @@
             "any_tags": [
                 "instofailures"
             ]
+        },
+        "creativity": {
+            "all_tags": [],
+            "any_tags": [
+                "creativity"
+            ]
+        },
+        "convoStarters": {
+            "all_tags": [],
+            "any_tags": [
+                "convoStarters"
+            ],
+            "readState": ""
         }
     }
 }
