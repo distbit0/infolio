@@ -94,6 +94,10 @@
         "convoStarters": {
             "description": "about good questions which you can ask in conversations, or other settings",
             "use_summary": true
+        },
+        "community growth": {
+            "description": "defi trader community building growth strategies",
+            "use_summary": true
         }
     },
     "listToTagMappings": {
