@@ -152,7 +152,7 @@ def hideArticlesMarkedAsRead():
     for fileName in markedAsReadFiles:
         newPath = utils.hide_file_with_name(fileName, articleFileFolder)
         if newPath:
-            try:    
+            try:
                 utils.addUrlToUrlFile(
                     utils.getUrlOfArticle(newPath),
                     utils.getAbsPath("../storage/markedAsReadArticles.txt"),
@@ -496,7 +496,7 @@ def main():
     )
     logger.info("update @voice lists")
     appendToLists()
-    modifyListFiles()
+    # modifyListFiles()
 
 
 if __name__ == "__main__":

@@ -103,6 +103,11 @@
     "listToTagMappings": {
         "infofi": {
             "all_tags": [],
+            "formats": [
+                "epub",
+                "html",
+                "mhtml"
+            ],
             "any_tags": [
                 "infofi"
             ]
