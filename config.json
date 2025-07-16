@@ -84,7 +84,7 @@
             "use_summary": true
         },
         "epistech": {
-            "description": "about using technology to improve epistemics, decision making, knowledge acquisition, truth discovery etc. e.g. via knowledge graphs, incentives or any other mechanism",
+            "description": "about using technology to improve epistemics, decision making, knowledge acquisition, truth discovery etc. e.g. via knowledge graphs, incentives or any other mechanism. not including mathematical ML journal papers",
             "use_summary": true
         },
         "creativity": {
