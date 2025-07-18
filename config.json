@@ -5,7 +5,7 @@
     "backupFolderPath": "/home/pimania/miscSyncs/ebooksBackup/",
     "convertLinksDir": "/home/pimania/dev/convertLinks",
     "maxSummariesPerSession": 300,
-    "maxArticlesToTagPerSession": 2000,
+    "maxArticlesToTagPerSession": 4000,
     "droidEbooksFolderPath": "/storage/emulated/0/ebooks/",
     "summary_in_max_words": 8000,
     "enable_article_summarization": true,
@@ -69,7 +69,7 @@
     ],
     "article_tags": {
         "infofi": {
-            "description": "about prediction markets or futarchy or about intelligence marketplaces or about information elicitation incentive mechanisms to improve human cognition, improve decision making or improve information quality or about applications of ai agents to crypto or about novel crypto capital allocation mechanisms or about governance incentives",
+            "description": "about any of the following:\nprediction markets\ninformation markets\nidea markets\nfutarchy\nintelligence marketplaces\ninformation elicitation incentive mechanisms to improve human cognition, improve decision making or improve information quality\napplications of ai agents to crypto\nnovell crypto capital allocation mechanisms\ngovernance incentives",
             "use_summary": true
         },
         "impLossAndLVR": {
@@ -113,12 +113,22 @@
             ]
         },
         "lvr": {
+            "formats": [
+                "epub",
+                "html",
+                "mhtml"
+            ],
             "all_tags": [],
             "any_tags": [
                 "impLossAndLVR"
             ]
         },
         "epistech": {
+            "formats": [
+                "epub",
+                "html",
+                "mhtml"
+            ],
             "all_tags": [],
             "any_tags": [
                 "epistech"
@@ -131,6 +141,11 @@
             ]
         },
         "creativity": {
+            "formats": [
+                "epub",
+                "html",
+                "mhtml"
+            ],
             "all_tags": [],
             "any_tags": [
                 "creativity"
