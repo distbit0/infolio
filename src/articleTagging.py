@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple, Set, Optional
 from loguru import logger
 from dotenv import load_dotenv
 from openai import OpenAI
-from .utils import getConfig
 from . import db
 from . import textExtraction
 from . import utils
@@ -57,7 +56,7 @@ class TagManager:
 
     def sync_tags_from_config(self) -> None:
         """Synchronize tag definitions from config.json into the database."""
-        config = getConfig()
+        config = utils.getConfig()
         db.sync_tags_from_config(config)
 
 
@@ -65,7 +64,7 @@ class TagEvaluator:
     """Evaluate whether an article matches given tag descriptions using OpenRouter API."""
 
     def __init__(self):
-        self.config = getConfig()
+        self.config = utils.getConfig()
         self.model = self.config.get("ai_model", "google/gemini-2.0-flash-001")
         self.batch_size = int(self.config.get("tag_batch_size", 3))
         logger.info(f"Tag batch size set to {self.batch_size}")
@@ -184,7 +183,7 @@ class ArticleTagger:
     """Manage applying tags to articles using parallel processing and AI evaluation."""
 
     def __init__(self):
-        self.config = getConfig()
+        self.config = utils.getConfig()
         self.articles_path = self.config.get("articleFileFolder", "")
         self.max_articles_per_session = int(
             self.config.get("maxArticlesToTagPerSession", 100)
@@ -213,61 +212,69 @@ class ArticleTagger:
         """
         # Get active tag IDs first
         active_tag_ids = self._get_active_tag_ids()
-        
+
         # Initialize variables for article collection
         collected_articles = []
         current_limit = self.max_articles_per_session
-        
+
         # Keep fetching articles until we have enough taggable ones or no more are available
         while len(collected_articles) < self.max_articles_per_session:
             # Get a batch of articles from the database
             batch_articles = db.get_articles_needing_tagging(current_limit)
-            
+
             # If no more articles are available, break the loop
             if not batch_articles:
                 break
-                
+
             # Filter articles that are taggable with at least one active tag
             for article in batch_articles:
                 article_id, file_hash, file_name, text = article
-                
+
                 # Skip articles we've already collected
                 if any(a[0] == article_id for a in collected_articles):
                     continue
-                
+
                 # Check if this article can be tagged with at least one active tag
                 is_taggable = False
                 for tag_id in active_tag_ids:
                     # Skip checking tags already applied to this article
-                    article_existing_tags = self.article_tagged_cache.get(file_name, set())
+                    article_existing_tags = self.article_tagged_cache.get(
+                        file_name, set()
+                    )
                     if tag_id in article_existing_tags:
                         continue
-                        
+
                     # Check if tag is applicable to this article based on filename filtering
                     if tag_id in self.tag_details_cache:
                         matchingArticles = self.tag_article_match_cache.get(tag_id)
-                        if matchingArticles is None or file_name.lower() in matchingArticles:
+                        if (
+                            matchingArticles is None
+                            or file_name.lower() in matchingArticles
+                        ):
                             # This article can be tagged with at least one tag
                             is_taggable = True
                             break
-                
+
                 # If this article is taggable, add it to our collection
                 if is_taggable:
                     collected_articles.append(article)
-                    
+
                 # If we've collected enough articles, stop processing this batch
                 if len(collected_articles) >= self.max_articles_per_session:
                     break
-            
+
             # If we've processed all available articles and still need more,
             # increase the limit for the next fetch
-            if len(collected_articles) < self.max_articles_per_session and len(batch_articles) < current_limit:
+            if (
+                len(collected_articles) < self.max_articles_per_session
+                and len(batch_articles) < current_limit
+            ):
                 # No more articles available
                 break
-            
+
             # Increase the limit for the next fetch
             current_limit *= 2
-        
+
         return collected_articles
 
     def _get_tags_for_article(self, file_name: str, active_tag_ids: Set[int]) -> List:
@@ -318,8 +325,17 @@ class ArticleTagger:
                     all_tags=tag.get("all_tags"),
                     not_any_tags=tag.get("not_any_tags"),
                 )
-                logger.info("Tag", tag["name"], "has", len(articlesMatchingTag), "potential articles")
-                self.tag_article_match_cache[tag["id"]] = [os.path.basename(fileName).lower() for fileName in articlesMatchingTag]
+                logger.info(
+                    "Tag",
+                    tag["name"],
+                    "has",
+                    len(articlesMatchingTag),
+                    "potential articles",
+                )
+                self.tag_article_match_cache[tag["id"]] = [
+                    os.path.basename(fileName).lower()
+                    for fileName in articlesMatchingTag
+                ]
 
     def _prepare_article_work_units(
         self, article: Tuple[int, str, str, str], active_tag_ids: Set[int]
@@ -486,66 +502,74 @@ def analyze_tag_results(tag_name: str) -> None:
         return
     matching_articles = db.get_articles_by_tag(tag_name)
     non_matching_articles = db.get_articles_not_matching_tag(tag_name)
-    
+
     # Separate matching articles into URLs and non-URLs
-    matching_urls = []
+    matching_read_urls = []
+    matching_unread_urls = []
     matching_files = []
-    
+
     for file_name in matching_articles:
-        filePath = os.path.join(getConfig()["articleFileFolder"], file_name)
+        filePath = os.path.join(utils.getConfig()["articleFileFolder"], file_name)
         # For HTML and MHTML files, try to get the URL
-        if file_name.lower().endswith(('.html', '.mhtml')) and os.path.exists(filePath):
+        if file_name.lower().endswith((".html", ".mhtml")) and os.path.exists(filePath):
             url = utils.getUrlOfArticle(filePath)
-            if url:  # Only use URL if one was found
-                matching_urls.append(url)
+            if url:
+                if file_name[0] == ".":
+                    matching_read_urls.append(url)
+                else:
+                    matching_unread_urls.append(url)
                 continue
         # If no URL found or not an HTML/MHTML file, add to files list
         matching_files.append(file_name)
-    
+
     # Separate non-matching articles into URLs and non-URLs
     non_matching_urls = []
     non_matching_files = []
-    
+
     for file_name in non_matching_articles:
-        filePath = os.path.join(getConfig()["articleFileFolder"], file_name)
+        filePath = os.path.join(utils.getConfig()["articleFileFolder"], file_name)
         # For HTML and MHTML files, try to get the URL
-        if file_name.lower().endswith(('.html', '.mhtml')) and os.path.exists(filePath):
+        if file_name.lower().endswith((".html", ".mhtml")) and os.path.exists(filePath):
             url = utils.getUrlOfArticle(filePath)
             if url:  # Only use URL if one was found
                 non_matching_urls.append(url)
                 continue
         # If no URL found or not an HTML/MHTML file, add to files list
         non_matching_files.append(file_name)
-    
+
     # Create the report with separate sections
     report = f"# Tag Analysis: {tag_name}\n\n"
-    
+
     # Matching Articles section
     report += f"## Matching Articles ({len(matching_articles)})\n\n"
-    
+
     # URLs subsection
-    report += f"### URLs ({len(matching_urls)})\n\n"
-    for url in matching_urls:
+    report += f"### Read URLs ({len(matching_read_urls)})\n\n"
+    for url in matching_read_urls:
         report += f"- {url}\n"
-    
+
+    report += f"### Unread URLs ({len(matching_unread_urls)})\n\n"
+    for url in matching_unread_urls:
+        report += f"- {url}\n"
+
     # Files subsection
     report += f"\n### Files ({len(matching_files)})\n\n"
     for file_name in matching_files:
         report += f"- {file_name}\n"
-    
+
     # Non-Matching Articles section
     report += f"\n## Non-Matching Articles ({len(non_matching_articles)})\n\n"
-    
+
     # URLs subsection
     report += f"### URLs ({len(non_matching_urls)})\n\n"
     for url in non_matching_urls:
         report += f"- {url}\n"
-    
+
     # Files subsection
     report += f"\n### Files ({len(non_matching_files)})\n\n"
     for file_name in non_matching_files:
         report += f"- {file_name}\n"
-    
+
     report_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "storage",
@@ -556,7 +580,136 @@ def analyze_tag_results(tag_name: str) -> None:
     logger.info(f"Tag analysis saved to: {report_path}")
 
 
-def main(all_tags=True, limit=None, analyze=None, debug=False):
+def updatePerTagFiles(root_folder):
+    """Generate file lists per tag for both URLs and file names/hashes.
+
+    This function queries the database for all tags, then for each tag:
+    1. Creates a file containing the URLs and titles of HTML/MHTML articles with that tag
+    2. Creates a file containing names and hashes of all articles with that tag
+
+    All files are stored in a single "tag_files" subdirectory.
+
+    Args:
+        root_folder: Path to the root folder where articles are stored
+    """
+
+    # Ensure database is set up
+    db.setup_database()
+
+    # Get the tag files directory from config
+    tag_files_dir = getConfig()["backupFolderPath"]
+    os.makedirs(tag_files_dir, exist_ok=True)
+
+    # Load existing hash data from all JSON files to avoid recalculating hashes
+    existing_hash_data = {}
+    for file_name in os.listdir(tag_files_dir):
+        if file_name.endswith("_files_and_hashes.json"):
+            file_path = os.path.join(tag_files_dir, file_name)
+            try:
+                with open(file_path, "r") as f:
+                    tag_hash_data = json.load(f)
+                    # Add to our master dictionary of file paths and their hashes
+                    existing_hash_data.update(tag_hash_data)
+            except (json.JSONDecodeError, IOError):
+                # If file is corrupted, skip it
+                pass
+
+    # Get all tags with article counts
+    tags = db.get_all_tags_with_article_count()
+
+    # Total number of tags processed
+    total_tags = len(tags)
+    tags_processed = 0
+    skipped_tags = 0
+
+    # Process each tag
+    for tag_id, tag_name, article_count in tags:
+        # Skip tags with 0 articles
+        if article_count == 0:
+            skipped_tags += 1
+            continue
+
+        tags_processed += 1
+        logger.debug(
+            f"Processing tag {tags_processed}/{total_tags}: {tag_name} ({article_count} articles)"
+        )
+
+        # Get all articles with this tag
+        tagged_articles = db.get_articles_for_tag(tag_id)
+
+        # Lists to store URLs and file data
+        urls_with_titles = []
+        file_data = {}
+
+        # Process each article
+        for article_id, file_name in tagged_articles:
+            try:
+                # Find the full path of the article
+                article_path = os.path.join(root_folder, file_name)
+
+                # Check if we already have hash for this file
+                if article_path in existing_hash_data and os.path.exists(article_path):
+                    # Use existing hash if file exists
+                    file_hash = existing_hash_data[article_path]
+                else:
+                    # Calculate hash only for new or modified files
+                    file_hash = utils.calculate_ipfs_hash(article_path)
+
+                file_data[article_path] = file_hash
+
+                # Add URL and title if available (only for HTML/MHTML files)
+                if article_path.lower().endswith((".html", ".mhtml")):
+                    article_url = utils.getUrlOfArticle(article_path)
+                    if article_url:
+                        # Try to extract a title from the file if possible
+                        title_display = os.path.splitext(
+                            os.path.basename(article_path)
+                        )[0]
+                        urls_with_titles.append((article_url, title_display))
+            except Exception as e:
+                logger.info(f"Error processing {file_name}: {e}")
+
+        # Sanitize tag name for file system
+        safe_tag_name = re.sub(r"[^\w\-_\.]", "_", tag_name)
+
+        # Write URL file if we found any URLs
+        if urls_with_titles:
+            tag_url_file_path = os.path.join(tag_files_dir, f"{safe_tag_name}_urls.txt")
+            with open(tag_url_file_path, "w") as f:
+                for url, title in urls_with_titles:
+                    f.write(f"# {title}\n{url}\n\n")
+
+            logger.debug(
+                f"  - Created URL file with {len(urls_with_titles)} URLs: {os.path.basename(tag_url_file_path)}"
+            )
+
+        # Write file data if we found any files
+        if file_data:
+            tag_file_path = os.path.join(
+                tag_files_dir, f"{safe_tag_name}_files_and_hashes.json"
+            )
+
+            with open(tag_file_path, "w") as f:
+                json.dump(file_data, f, indent=2)
+
+            logger.debug(
+                f"  - Created file hash data with {len(file_data)} files: {os.path.basename(tag_file_path)}"
+            )
+
+    # Clean up the database by removing orphaned items
+    orphaned_tags, orphaned_hashes = db.clean_orphaned_database_items()
+    if orphaned_tags > 0:
+        logger.info(f"Removed {orphaned_tags} tags with no associated articles")
+    if orphaned_hashes > 0:
+        logger.info(f"Removed {orphaned_hashes} orphaned tag hash entries")
+
+    logger.info(
+        f"Finished processing {tags_processed} tags ({skipped_tags} tags with 0 articles skipped)"
+    )
+    logger.info(f"All tag files have been generated in: {tag_files_dir}")
+
+
+def tagArticles(all_tags=True, limit=None, analyze=None, debug=False):
     """
     Main entry point for the tagging process.
 
@@ -601,4 +754,4 @@ def main(all_tags=True, limit=None, analyze=None, debug=False):
 
 
 if __name__ == "__main__":
-    main()
+    tagArticles()

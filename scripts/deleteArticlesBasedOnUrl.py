@@ -3,11 +3,14 @@ import sys
 import requests
 import shutil
 from bs4 import BeautifulSoup
-from utils import getUrlOfArticle, getConfig
+from . import utils
 import pysnooper
+from loguru import logger
 
-sys.path.append("/home/pimania/dev/convertLinks")
-from convertLinks import main
+
+sys.path.append(utils.getConfig()["convertLinksDir"])
+from convertLinks import main as convertLinks
+
 
 urlSubstring = "ifirhfuhfruihriuhfriuehfouehoui"
 
@@ -17,13 +20,13 @@ def process_articles_in_directory(directory):
         for file in files:
             if file.endswith(".html") or file.endswith(".mhtml"):
                 file_path = os.path.join(root, file)
-                url = getUrlOfArticle(file_path)
+                url = utils.getUrlOfArticle(file_path)
                 if url and urlSubstring.lower() in url.lower():
                     ## move file to linux trash directory
                     trashDir = "/home/pimania/.local/share/Trash/files/"
-                    print(f"moving to trash: {file_path}")
+                    logger.info(f"moving to trash: {file_path}")
                     # shutil.move(file_path, trashDir)
 
 
-directory = getConfig()["articleFileFolder"]
+directory = utils.getConfig()["articleFileFolder"]
 process_articles_in_directory(directory)

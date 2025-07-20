@@ -1,12 +1,11 @@
-import utils
+from . import utils
+from loguru import logger
 
 subject = ""
 
 
 def getBlogs(subject):
-    urls = utils.searchArticlesForQuery(
-        "*", [subject], readState="read", formats=["html", "mhtml"]
-    ).values()
+    urls = utils.getArticleUrls([subject], readState="read").values()
     urls = list(urls)
     blogs = utils.getBlogsFromUrls(urls)
     return blogs
@@ -39,10 +38,10 @@ if __name__ == "__main__":
         f"{blog.replace('scribe.rip', 'medium.com')} ({count})"
         for blog, count in sortedBlogCounts[:5]
     ]
-    print("\n".join(newBlogs))
+    logger.info("\n".join(newBlogs))
     addBlogs = input(f"Add top {len(newBlogs)} blogs to reviewed? (default=no): ")
     if addBlogs.lower() in ["y", "yes"]:
-        utils.addUrlToUrlFile(
+        utils.addUrlsToUrlFile(
             [blog.split(" ")[0] for blog in newBlogs],
             utils.getAbsPath("../storage/reviewedBlogs.txt"),
         )

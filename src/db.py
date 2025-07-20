@@ -2,6 +2,7 @@ import sqlite3
 import os
 import json
 import hashlib
+import traceback
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Set, Optional
 from loguru import logger
@@ -480,7 +481,7 @@ def get_tags_for_article(article_id: int) -> List[int]:
 
 def get_all_article_tags() -> List[Tuple[int, str, int]]:
     """Get all article tags with their associated file names.
-    
+
     Returns:
         List of tuples containing (article_id, file_name, tag_id)
     """
@@ -662,11 +663,11 @@ def searchArticlesByTags(
         "article_summaries.db",
     )
     if not os.path.exists(db_path):
-        print(f"Tag database not found at {db_path}")
+        logger.error(f"Tag database not found at {db_path}")
         return {}
 
     # Get all article paths that match the format criteria
-    article_paths = utils.getArticlePathsForQuery("*", formats, readState=readState)
+    article_paths = utils.getArticlePaths(formats, readState=readState)
 
     # If no tags specified and only filtering by format, just apply read state filter and return
     if not all_tags and not any_tags and not not_any_tags:
@@ -768,3 +769,93 @@ def searchArticlesByTags(
     finally:
         if cursor:
             cursor.connection.close()
+
+
+def remove_nonexistent_files_from_database(articles_path: Optional[str] = None) -> int:
+    """Remove database entries for files that no longer exist on the filesystem.
+
+    Args:
+        articles_path: Path to the articles directory.
+
+    Returns:
+        int: Number of files removed from the database.
+    """
+    if not articles_path:
+        config = utils.getConfig()
+        articles_path = config.get("articleFileFolder", "")
+        if not articles_path:
+            logger.error("Article file folder not found in config")
+            return 0
+
+    logger.debug(f"Checking for nonexistent files in database from: {articles_path}")
+    existing_files = {os.path.basename(path) for path in utils.getArticlePaths()}
+    removed_count = remove_nonexistent_files(existing_files)
+    if removed_count > 0:
+        logger.info(
+            f"Removed {removed_count} entries for nonexistent files from database"
+        )
+    else:
+        logger.info("No nonexistent files found in database")
+    return removed_count
+
+
+def remove_orphaned_tags_from_database() -> int:
+    """Remove tags from the database that don't have any associated articles.
+
+    Returns:
+        int: Number of orphaned tags removed from the database.
+    """
+    logger.debug("Checking for orphaned tags in database")
+    removed_count = remove_orphaned_tags()
+    if removed_count > 0:
+        logger.info(f"Removed {removed_count} orphaned tags from database")
+    else:
+        logger.info("No orphaned tags found in database")
+    return removed_count
+
+
+def add_files_to_database(articles_path: Optional[str] = None) -> int:
+    """Add all supported files to the database without summarizing.
+
+    Args:
+        articles_path: Path to the articles directory.
+
+    Returns:
+        int: Number of new files added to the database.
+    """
+    if not articles_path:
+        config = utils.getConfig()
+        articles_path = config.get("articleFileFolder", "")
+        if not articles_path:
+            logger.error("Article file folder not found in config")
+            return 0
+
+    logger.debug(f"Adding files to database from: {articles_path}")
+    setup_database()
+    config = utils.getConfig()
+    file_names_to_skip = config.get("fileNamesToSkip", [])
+    existing_hashes = set(get_all_file_hashes())
+    added_count = 0
+    all_article_paths = utils.getArticlePaths()
+    logger.info(f"Found {len(all_article_paths)} files in {articles_path}.")
+
+    for file_path in all_article_paths:
+        file_name = os.path.basename(file_path)
+        if file_name in file_names_to_skip:
+            continue
+        try:
+            file_hash = utils.calculate_normal_hash(file_path)
+            if file_hash in existing_hashes:
+                continue
+            file_ext = os.path.splitext(file_name)[1].lstrip(".")
+            add_file_to_database(file_hash, file_name, file_ext)
+            existing_hashes.add(file_hash)
+            added_count += 1
+            if added_count % 100 == 0:
+                logger.debug(f"Added {added_count} new files to database")
+        except Exception as e:
+            logger.error(f"Error adding file to database: {file_path}: {str(e)}")
+            traceback.print_exc()
+
+    logger.info(f"Added a total of {added_count} new files to database")
+    return added_count

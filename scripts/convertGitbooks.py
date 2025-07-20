@@ -9,12 +9,13 @@ from pyparsing import html_comment
 import requests
 import shutil
 from bs4 import BeautifulSoup
-from utils import getUrlOfArticle, getConfig
 import pysnooper
+from . import utils
+from loguru import logger
 
 
-sys.path.append("/home/pimania/dev/convertLinks")
-from convertLinks import main
+sys.path.append(utils.getConfig()["convertLinksDir"])
+from convertLinks import main as convertLinks
 
 
 def getSrcUrlOfArticle(articlePath):
@@ -32,28 +33,29 @@ def process_articles_in_directory(directory):
         for file in files:
             if file.endswith(".html") or file.endswith(".mhtml"):
                 file_path = os.path.join(root, file)
-                url = getUrlOfArticle(file_path)
+                url = utils.getUrlOfArticle(file_path)
                 if "gist.github.com" in url:
                     srcUrl = getSrcUrlOfArticle(file_path)
                     if srcUrl:
                         filesToConvert.append([file_path, srcUrl, url])
 
-    print(f"files to convert: {len(filesToConvert)}")
+    logger.info(f"files to convert: {len(filesToConvert)}")
     for i, article in enumerate(filesToConvert):
         file_path, url, gitBookUrl = article
-        print("\n\n\n\n")
+        logger.info(f"Processing article {i+1} of {len(filesToConvert)}")
         # print(f"gitbook url: {gitBookUrl}")
-        print(i, "of ", len(filesToConvert))  # , " ", file_path, url)
         # print(f"converting url: {url}")
         newUrls = main(url, False, True)
         newUrl = newUrls[0] if newUrls else False
 
         if not newUrl:
-            print(f"deleting file because of issue with url: {url} {file_path}\n\n")
+            logger.warning(
+                f"deleting file because of issue with url: {url} {file_path}"
+            )
             # os.remove(file_path)
             continue
 
-        print(f"new url: {newUrl}")
+        logger.info(f"new url: {newUrl}")
         response = requests.get(newUrl)
         soup = BeautifulSoup(response.text, "html.parser")
         html_content = str(soup)
@@ -82,6 +84,6 @@ def process_articles_in_directory(directory):
 #         open(filePath, "r").read()
 
 
-directory = getConfig()["articleFileFolder"]
+directory = utils.getConfig()["articleFileFolder"]
 process_articles_in_directory(directory)
 # createFiles()

@@ -63,7 +63,7 @@ def getPdfText(pdf, pages=None):
         pdfFileObj.close()
     except PyPDF2.errors.PdfReadError:
         traceback.print_exc()
-        print(f"Error in pdf: {pdf}")
+        logger.error(f"Error in pdf: {pdf}")
         return None
     pdfText = "\n".join(pdfText)
     return pdfText

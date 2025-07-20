@@ -1,10 +1,8 @@
-from utils import getConfig
-import utils
 import argparse
-import subprocess
 import os
-import cProfile
-import pstats
+from . import utils
+from . import manageLists
+from loguru import logger
 
 
 def getCMDArguments():
@@ -52,47 +50,47 @@ def main():
     args = getCMDArguments()
     subjectList = [args.subject] if args.subject else []
 
-    articles = utils.searchArticlesForQuery(
-        args.query, subjectList, readState="", formats=["html", "pdf", "mhtml"]
-    )
+    ## articles = utils.getArticleUrls(
+    ##     subjectList, readState="", formats=["html", "pdf", "mhtml"]
+    ## )
 
     articleUrls = [url for url in articles.values() if url]
     articlePaths = list(articles.keys())
     articleUrls = sorted(articleUrls)
 
-    utils.addUrlToUrlFile(
+    utils.addUrlsToUrlFile(
         articleUrls, utils.getAbsPath("../output/searchResultUrls.txt"), True
     )
 
-    print("Article URLs:\n")
+    logger.info("Article URLs:")
     for path, url in articles.items():
         if url:
             file_name = os.path.basename(path)
             clean_file_name = "".join(
                 c if c.isalnum() else " " for c in file_name
             ).strip()
-            print(f"{clean_file_name}:\n{url}\n")
+            logger.info(f"{clean_file_name}:\n{url}\n")
 
     if args.returnPaths:
-        print(f"\n\nArticle paths:\n\n" + "\n".join(articlePaths))
+        logger.info(f"\n\nArticle paths:\n\n" + "\n".join(articlePaths))
 
     if args.returnBlogs:
         blogUrls = utils.getBlogsFromUrls(articleUrls)
-        print(f"\n\nBlog URLs:\n\n" + "\n".join(blogUrls))
+        logger.info(f"\n\nBlog URLs:\n\n" + "\n".join(blogUrls))
 
     if args.copyUrls:
         os.system(
             "xclip -sel c < " + utils.getAbsPath("../output/searchResultUrls.txt")
         )
-        print("\n\nCopied article URLs to clipboard")
+        logger.info("Copied article URLs to clipboard")
 
     if args.overwrite:
-        utils.deleteAllArticlesInList("zz+++TEMP+++")
+        manageLists.deleteAllArticlesInList("zz+++TEMP+++")
 
     if args.atVoice:
-        utils.addArticlesToList("zz+++TEMP+++", articlePaths)
+        manageLists.addArticlesToList("zz+++TEMP+++", articlePaths)
         if not args.overwrite:
-            print(
+            logger.warning(
                 "not overwriting existing articles in @voice list!. Use -o to overwrite"
             )
 

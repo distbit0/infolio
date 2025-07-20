@@ -1,0 +1,356 @@
+import os
+import shutil
+import requests
+import re
+from collections import defaultdict
+import sys
+from loguru import logger
+from . import utils, manageLists
+
+
+def delete_file_with_name(file_name, folder):
+    # Find all files with the file name in the folder using our enhanced function
+    # Delete all found files
+    # print(f"Deleting {file_name} from {folder}")
+    notFound = True
+    possibleExts = ["pdf", "epub"]
+    currentExt = file_name.split(".")[-1]
+    possibleExts.append(currentExt)
+    file_name = os.path.basename(file_name)
+    for ext in possibleExts:
+        try:
+            fileName = ".".join(file_name.split(".")[:-1]) + "." + ext
+            matching_file = os.path.join(folder, fileName)
+            homeDir = os.path.expanduser("~")
+            dest = os.path.join(homeDir, ".local/share/Trash/files/", fileName)
+            if os.path.exists(dest):
+                logger.warning(f"File {fileName} already in trash")
+                continue
+            if os.path.exists(matching_file):
+                shutil.move(matching_file, dest)
+                logger.info(f"Deleted {matching_file}")
+                notFound = False
+        except OSError:
+            pass
+    if notFound:
+        logger.warning(
+            f"File {file_name} not found in folder {folder}, with extensions {possibleExts}"
+        )
+
+
+def hide_file_with_name(orgFileName, folder):
+    possibleExts = ["pdf", "epub"]
+    currentExt = orgFileName.split(".")[-1]
+    orgFileName = os.path.basename(orgFileName)
+    possibleExts.append(currentExt)
+    notFound = True
+    for ext in possibleExts:
+        try:
+            fileName = ".".join(orgFileName.split(".")[:-1]) + "." + ext
+            matching_file = os.path.join(folder, fileName)
+            if os.path.exists(matching_file):
+                hiddenFileName = "." + fileName
+                if hiddenFileName == "." or fileName[0] == ".":
+                    continue
+                hiddenFilePath = os.path.join(folder, hiddenFileName)
+                logger.info(f"HIDING {fileName} >> {hiddenFilePath}")
+                shutil.move(matching_file, hiddenFilePath)
+                notFound = False
+                return hiddenFilePath
+        except OSError:
+            pass
+    if notFound:
+        logger.warning(
+            f"File {orgFileName} not found in folder {folder}, with extensions {possibleExts}"
+        )
+    return orgFileName
+
+
+def addFileHashesToAlreadyAdded():
+    nonHtmlFormats = utils.getConfig()["docFormatsToMove"]
+    nonHtmlFormats = [fmt for fmt in nonHtmlFormats if fmt not in ["html", "mhtml"]]
+    listFile = utils.getAbsPath("../storage/alreadyAddedArticles.txt")
+    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats)
+    alreadyAddedFileNames = str(utils.getUrlsFromFile(listFile)).lower()
+    fileNames = [
+        os.path.basename(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath) not in alreadyAddedFileNames
+    ]
+    fileHashes = [
+        utils.calculate_normal_hash(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath) not in alreadyAddedFileNames
+    ]
+    itemsToAdd = list(set(fileNames + fileHashes))
+    utils.addUrlsToUrlFile(itemsToAdd, listFile)
+
+
+def addReadFilesHashesToMarkedAsRead():
+    nonHtmlFormats = [
+        fmt
+        for fmt in utils.getConfig()["docFormatsToMove"]
+        if fmt not in ["html", "mhtml"]
+    ]
+    listFile = utils.getAbsPath("../storage/alreadyAddedArticles.txt")
+    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats, readState="read")
+    alreadyMarkedAsReadFileNames = utils.getUrlsFromFile(listFile)
+    fileNames = [
+        os.path.basename(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath) not in alreadyMarkedAsReadFileNames
+    ]
+    fileHashes = [
+        utils.calculate_normal_hash(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath) not in alreadyMarkedAsReadFileNames
+    ]
+    itemsToAdd = list(set(fileNames + fileHashes))
+    utils.addUrlsToUrlFile(itemsToAdd, listFile)
+
+    fileHashes = [
+        utils.calculate_normal_hash(filePath) for filePath in matchingArticles
+    ]
+    utils.addUrlsToUrlFile(fileHashes, listFile)
+
+
+def deleteFilesMarkedToDelete():
+    markedAsDeletedFiles = manageLists.getArticlesFromList("_DELETE")
+    articleFileFolder = utils.getConfig()["articleFileFolder"]
+    for fileName in markedAsDeletedFiles:
+        delete_file_with_name(fileName, articleFileFolder)
+    manageLists.deleteAllArticlesInList("_DELETE")
+
+
+def hideArticlesMarkedAsRead():
+    markedAsReadFiles = manageLists.getArticlesFromList("_READ")
+    articleFileFolder = utils.getConfig()["articleFileFolder"]
+    for fileName in markedAsReadFiles:
+        newPath = hide_file_with_name(fileName, articleFileFolder)
+        if newPath:
+            try:
+                utils.addUrlsToUrlFile(
+                    utils.getUrlOfArticle(newPath),
+                    utils.getAbsPath("../storage/markedAsReadArticles.txt"),
+                )
+            except FileNotFoundError:
+                logger.error(f"Failed to mark {fileName} as read")
+    manageLists.deleteAllArticlesInList("_READ")
+
+
+def deleteDuplicateArticleFiles(urls_to_filenames):
+    # Dictionary to store seen URLs in each directory
+    dir_seen_urls = {}
+
+    for fileName in urls_to_filenames:
+        url = urls_to_filenames[fileName]
+        if not url:
+            continue
+        url = utils.formatUrl(url)
+        if "http" not in url:
+            continue
+
+        # Get directory of the file
+        directory = os.path.dirname(fileName)
+
+        if directory not in dir_seen_urls:
+            # If directory is not in the dictionary, add it with the current url
+            dir_seen_urls[directory] = {url}
+        elif url in dir_seen_urls[directory] and url:
+            # If url has been seen in this directory, delete the file
+            logger.info(f"deleting because duplicate: {fileName} {url}")
+            homeDir = os.path.expanduser("~")
+            dest = os.path.join(
+                homeDir, ".local/share/Trash/files/", "DUP_" + fileName.split("/")[-1]
+            )
+            if os.path.exists(dest):
+                logger.info(f"File {fileName} already in trash")
+                continue
+            shutil.move(fileName, dest)
+        else:
+            # If url has not been seen in this directory, add it to the set
+            dir_seen_urls[directory].add(url)
+
+
+def moveDocsToTargetFolder():
+    docPaths = []
+    PDFFolders = utils.getConfig()["pdfSourceFolders"]
+    targetFolder = utils.getConfig()["articleFileFolder"]
+
+    for folderPath in PDFFolders:
+        docPaths += utils.getArticlePaths(folderPath=folderPath)
+
+    logger.info(f"Number of docPaths: {len(docPaths)}")
+
+    alreadyAddedHashes = str(
+        utils.getUrlsFromFile(utils.getAbsPath("../storage/alreadyAddedArticles.txt"))
+    )
+    markedAsReadHashes = str(
+        utils.getUrlsFromFile(utils.getAbsPath("../storage/markedAsReadArticles.txt"))
+    )
+
+    for docPath in docPaths:
+        docHash = utils.calculate_normal_hash(docPath)
+        if docHash in alreadyAddedHashes:
+            logger.info(f"Skipping importing duplicate file: {docPath}")
+            docFileName = docPath.split("/")[-1]
+            homeDir = os.path.expanduser("~")
+            erroDocPath = os.path.join(
+                homeDir, ".local/share/Trash/files/", "DUPLICATE_" + docFileName
+            )
+            if os.path.exists(erroDocPath):
+                logger.info(f"File {docPath} already in trash")
+                continue
+            shutil.move(docPath, erroDocPath)
+            continue
+
+        docName = docPath.split("/")[-1]
+
+        # Create a unique filename if needed
+        baseName, extension = os.path.splitext(docName)
+        uniqueName = docName
+        counter = 1
+        while os.path.exists(os.path.join(targetFolder, uniqueName)):
+            uniqueName = f"{baseName}_{counter}{extension}"
+            counter += 1
+
+        targetPath = os.path.join(targetFolder, uniqueName)
+
+        if docHash in markedAsReadHashes:
+            targetPath = os.path.join(targetFolder, "." + uniqueName)
+            logger.info(f"Marking as read: {docName}")
+
+        logger.info(f"Moving {docName} to {targetPath} derived from {docPath}")
+        shutil.move(docPath, targetPath)
+
+        utils.addUrlsToUrlFile(
+            [docHash, os.path.basename(targetPath)],
+            utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
+        )
+
+
+def deleteDuplicateFiles(directory_path):
+    duplicate_size_files = defaultdict(list)
+
+    # Since all files are in root directory, use os.listdir instead of os.walk
+    for filename in os.listdir(directory_path):
+        full_path = os.path.join(directory_path, filename)
+
+        # Skip if not a file
+        if not os.path.isfile(full_path):
+            continue
+
+        file_size = os.path.getsize(full_path)
+        file_hash = utils.calculate_normal_hash(full_path)
+        # Simplified unique_key without root directory component
+        unique_key = f"{file_size}_{file_hash}"
+
+        duplicate_size_files[unique_key].append(full_path)
+
+    for unique_key, file_paths in duplicate_size_files.items():
+        if len(file_paths) > 1:
+            # Separate hidden files (marked as read) from non-hidden files
+            hidden_files = [
+                path for path in file_paths if os.path.basename(path)[0] == "."
+            ]
+            non_hidden_files = [
+                path for path in file_paths if os.path.basename(path)[0] != "."
+            ]
+
+            files_to_remove = []
+
+            # Priority: Keep hidden files over non-hidden files
+            # Delete all non-hidden files if we have hidden files, otherwise keep one non-hidden file
+            if hidden_files:
+                # Keep all hidden files, remove all non-hidden files
+                files_to_remove = non_hidden_files
+                # If multiple hidden files, keep only one
+                if len(hidden_files) > 1:
+                    files_to_remove.extend(hidden_files[:-1])
+            else:
+                # No hidden files, keep one non-hidden file
+                files_to_remove = non_hidden_files[:-1]
+
+            logger.info(
+                f"Duplicate files found for key {unique_key}:",
+                f"hidden_files: {hidden_files}",
+                f"non_hidden_files: {non_hidden_files}",
+                f"files_to_remove: {files_to_remove}",
+            )
+
+            for file_path in files_to_remove:
+                logger.info(f"removed: {file_path}")
+                homeDir = os.path.expanduser("~")
+                dest = os.path.join(
+                    homeDir, ".local/share/Trash/files/", os.path.basename(file_path)
+                )
+                if os.path.exists(dest):
+                    logger.info(f"File {file_path} already in trash")
+                    continue
+                shutil.move(file_path, dest)
+
+
+def markArticlesWithUrlsAsRead(readUrls):
+    articleUrls = utils.getArticleUrls()
+    articleUrls = {v: k for k, v in articleUrls.items()}
+    for url in readUrls:
+        if url in articleUrls:
+            try:
+                hide_file_with_name(
+                    os.path.basename(articleUrls[url]),
+                    utils.getConfig()["articleFileFolder"],
+                )
+            except OSError:
+                logger.error(f"Error hiding {articleUrls[url]}")
+        utils.addUrlsToUrlFile(
+            url, utils.getAbsPath("../storage/markedAsReadArticles.txt")
+        )
+
+
+def getPDFTitle(pdfPath):
+    pdfTitle = ""
+    originalFileName = pdfPath.split("/")[-1]
+    pdfTitle = os.popen('pdftitle -p "' + pdfPath + '"').read()
+    if (not pdfTitle) or len(pdfTitle) < 4:
+        pdfTitle = originalFileName[:-4]
+        idType = utils.get_id_type(pdfTitle)
+        if idType == "arxiv":
+            pdfTitle = utils.getArxivTitle(pdfTitle)
+        elif idType == "doi":
+            pdfTitle = utils.getDOITitle(pdfTitle)
+    else:
+        pdfTitle = pdfTitle.strip()
+
+    pdfTitle = pdfTitle[:50]
+
+    pdfTitle += ".pdf"
+
+    pdfTitle = utils.removeIllegalChars(pdfTitle)
+    return pdfTitle
+
+
+def reTitlePDF(pdfPath):
+    pdfTitle = getPDFTitle(pdfPath)
+    newPath = "/".join(pdfPath.split("/")[:-1]) + "/" + pdfTitle
+    logger.info(f"Renaming PDF: {pdfPath} -> {newPath}")
+    return newPath
+
+
+def retitlePDFsInFolder(folderPath):
+    pdfPaths = utils.getArticlePaths(["pdf"], folderPath)
+    newPdfPaths = []
+    for pdfPath in pdfPaths:
+        newPath = reTitlePDF(pdfPath).lstrip(".")
+        suffix = 1
+        base, ext = os.path.splitext(newPath)
+        while newPath in newPdfPaths or os.path.exists(newPath):
+            newPath = f"{base}_{suffix}{ext}"
+            suffix += 1
+        newPdfPaths.append(newPath)
+        os.rename(pdfPath, newPath)
+
+
+def retitleAllPDFs():
+    PDFFolders = utils.getConfig()["pdfSourceFolders"]
+    for folderPath in PDFFolders:
+        retitlePDFsInFolder(folderPath)

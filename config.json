@@ -32,14 +32,6 @@
         "\\<\\!\\-\\- Hyperionics-SimpleHtml (.*?)-->",
         "Snapshot-Content-Location: (.*)\n"
     ],
-    "pdfSearchFolders": {
-        "/home/pimania/ebooks/Decentralised Finance": {
-            "subject": "Defi"
-        },
-        "/home/pimania/ebooks/Machine and human thought": {
-            "subject": "ai"
-        }
-    },
     "pdfSourceFolders": [
         "/home/pimania/Downloads"
     ],
@@ -58,14 +50,6 @@
         "?",
         "/",
         ","
-    ],
-    "foldersToExcludeFromCategorisation": [
-        "tweetThreads",
-        "telegramChats",
-        "discordChannels",
-        "Personal",
-        ".git",
-        ".stfolder"
     ],
     "article_tags": {
         "infofi": {

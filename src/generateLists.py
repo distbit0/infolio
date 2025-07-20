@@ -1,11 +1,9 @@
 import os
 import re
-import sys
 import time
 import subprocess
 import tempfile
 import zipfile
-import shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Tuple, Optional, Any, Set
@@ -17,7 +15,7 @@ from loguru import logger
 
 # Assuming local imports work as before
 from . import utils, db
-from .utils import getConfig
+from . import manageLists
 
 # --- Configuration & Constants --- (Same as before)
 load_dotenv()
@@ -315,7 +313,7 @@ def _run_html_prefixing(html_path: Path, prefixed_path: Path, summary: str) -> b
 # Correction: appendToLists now adds FULL PATHS (as strings) to the list
 def appendToLists():
     """Searches DB and adds FULL article paths (strings) to lists based on config."""
-    config = getConfig()
+    config = utils.getConfig()
     listToTagMappings = config.get("listToTagMappings", {})
     article_dir = Path(config.get("articleFileFolder", "."))
     if not article_dir.is_dir():
@@ -324,7 +322,7 @@ def appendToLists():
 
     for listName, listInfo in listToTagMappings.items():
         if listInfo.get("disabled", False):
-            utils.deleteListIfExists(listName)
+            manageLists.deleteListIfExists(listName)
             continue
 
         logger.debug(f"Checking articles for list '{listName}'")
@@ -367,7 +365,7 @@ def appendToLists():
                     convertedPaths.append(path)
 
             # Add the list of full path strings
-            utils.addArticlesToList(listName, convertedPaths)
+            manageLists.addArticlesToList(listName, convertedPaths)
             logger.info(
                 f"List '{listName}': Populated with {len(convertedPaths)} article paths"  # {convertedPaths}"
             )
@@ -519,7 +517,7 @@ def _process_html_prefixing(
 
 def modifyListFiles():
     """Processes files (referenced by full paths) in lists: PDF->EPUB conversion, HTML prefixing."""
-    config = getConfig()
+    config = utils.getConfig()
     listToTagMappings = config.get("listToTagMappings", {})
     article_dir = Path(config.get("articleFileFolder", "."))  # Base directory
     epub_dir = article_dir / EPUB_SUBDIR
@@ -536,7 +534,7 @@ def modifyListFiles():
             prefixSummary = listInfo.get("prefixSummary", False)
             try:
                 # Get list of FULL PATHS (strings) from the utility function now
-                current_paths_str = utils.getArticlesFromList(listName)
+                current_paths_str = manageLists.getArticlesFromList(listName)
                 if not current_paths_str:
                     logger.debug(f"List '{listName}' is empty, skipping modification.")
                     continue
@@ -557,7 +555,7 @@ def modifyListFiles():
                         f"List '{listName}' contains no existing files after validation, skipping modification."
                     )
                     # Optionally, clear the list here if it contained only invalid paths
-                    # utils.addArticlesToList(listName, [], overwrite=True)
+                    # manageLists.addArticlesToList(listName, [], overwrite=True)
                     continue
 
                 logger.info(
@@ -598,7 +596,7 @@ def modifyListFiles():
                 #         f"Updating list '{listName}' with {len(updated_paths_str)} processed paths."
                 #     )
                 #     logger.info(f"Updated paths: {updated_paths_str}")
-                #     utils.addArticlesToList(listName, updated_paths_str, overwrite=True)
+                #     manageLists.addArticlesToList(listName, updated_paths_str, overwrite=True)
                 # else:
                 #     logger.info(
                 #         f"No effective changes required for list '{listName}' after processing."

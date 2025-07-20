@@ -14,13 +14,13 @@ from openai import OpenAI
 if __name__ == "__main__":
     # When run directly, add parent directory to path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.utils import calculate_normal_hash, getConfig, getArticlePathsForQuery
-    from src.textExtraction import extract_text_from_file, TextExtractionError
+    import src.utils as utils
+    import src.textExtraction as textExtraction
     import src.db as db
 else:
     # When imported as a module
-    from .utils import calculate_normal_hash, getConfig, getArticlePathsForQuery
-    from .textExtraction import extract_text_from_file, TextExtractionError
+    from . import utils
+    from . import textExtraction
     from . import db
 
 # Configure loguru logger
@@ -56,15 +56,6 @@ for env_path in potential_env_paths:
         break
 
 
-def setup_database() -> str:
-    """Setup the SQLite database for article summaries if it doesn't exist.
-
-    Returns:
-        str: Path to the database file
-    """
-    return db.setup_database()
-
-
 def summarize_with_openrouter(text: str) -> Tuple[str, bool]:
     """Generate a summary of the text using the OpenRouter API.
 
@@ -83,7 +74,7 @@ def summarize_with_openrouter(text: str) -> Tuple[str, bool]:
         logger.error("OPENROUTER_API_KEY not found in environment variables")
         raise ValueError("OPENROUTER_API_KEY not found in environment variables")
 
-    config = getConfig()
+    config = utils.getConfig()
     model = config.get("ai_model")
 
     try:
@@ -153,7 +144,7 @@ def get_article_summary(file_path: str) -> Tuple[str, bool]:
     Returns:
         Tuple[str, bool]: Article summary and a flag indicating if text was sufficient.
     """
-    file_hash = calculate_normal_hash(file_path)
+    file_hash = utils.calculate_normal_hash(file_path)
     file_name = os.path.basename(file_path)
     file_format = os.path.splitext(file_path)[1].lower().lstrip(".")
 
@@ -184,9 +175,9 @@ def get_article_summary(file_path: str) -> Tuple[str, bool]:
     logger.debug(f"Generating new summary for: {file_name}")
 
     try:
-        config = getConfig()
+        config = utils.getConfig()
         max_words = int(config.get("summary_in_max_words", 3000))
-        text, extraction_method, word_count = extract_text_from_file(
+        text, extraction_method, word_count = textExtraction.extract_text_from_file(
             file_path, max_words
         )
         summary, is_sufficient = summarize_with_openrouter(text)
@@ -210,7 +201,7 @@ def get_article_summary(file_path: str) -> Tuple[str, bool]:
         )
         return summary, is_sufficient
 
-    except TextExtractionError as te:
+    except textExtraction.TextExtractionError as te:
         if not getattr(te, "already_logged", False):
             logger.error(f"Error extracting text from article: {str(te)}")
         db.update_article_summary(
@@ -243,7 +234,7 @@ def summarize_articles(articles_path: Optional[str] = None, query: str = "*") ->
     logger.info("====== Starting article summarization process ======")
 
     if not articles_path:
-        config = getConfig()
+        config = utils.getConfig()
         articles_path = config.get("articleFileFolder", "")
         if not articles_path:
             logger.error("No articles directory specified in config or argument")
@@ -263,7 +254,7 @@ def summarize_articles(articles_path: Optional[str] = None, query: str = "*") ->
         return
 
     articles_to_summarize = []
-    config = getConfig()
+    config = utils.getConfig()
     max_summaries_per_session = int(config.get("maxSummariesPerSession", 150))
     random.shuffle(articles_needing_summary)
 
@@ -323,7 +314,6 @@ def summarize_articles(articles_path: Optional[str] = None, query: str = "*") ->
 
     if summary_word_counts:
         avg_word_count = sum(summary_word_counts) / len(summary_word_counts)
-        print(f"Average word count in generated summaries: {avg_word_count:.2f} words")
         logger.info(
             f"Average word count in generated summaries: {avg_word_count:.2f} words"
         )
@@ -359,96 +349,6 @@ def process_single_article(article_path: str) -> Tuple[bool, str, bool, str]:
         error_message = f"Error processing article: {str(e)}"
         logger.error(f"{error_message}\n{traceback.format_exc()}")
         return False, error_message, False, ""
-
-
-def add_files_to_database(articles_path: Optional[str] = None) -> int:
-    """Add all supported files to the database without summarizing.
-
-    Args:
-        articles_path: Path to the articles directory.
-
-    Returns:
-        int: Number of new files added to the database.
-    """
-    if not articles_path:
-        config = getConfig()
-        articles_path = config.get("articleFileFolder", "")
-        if not articles_path:
-            logger.error("Article file folder not found in config")
-            return 0
-
-    logger.debug(f"Adding files to database from: {articles_path}")
-    db.setup_database()
-    config = getConfig()
-    file_names_to_skip = config.get("fileNamesToSkip", [])
-    existing_hashes = set(db.get_all_file_hashes())
-    added_count = 0
-    all_article_paths = getArticlePathsForQuery("*")
-    logger.info(f"Found {len(all_article_paths)} files in {articles_path}.")
-
-    for file_path in all_article_paths:
-        file_name = os.path.basename(file_path)
-        if file_name in file_names_to_skip:
-            continue
-        try:
-            file_hash = calculate_normal_hash(file_path)
-            if file_hash in existing_hashes:
-                continue
-            file_ext = os.path.splitext(file_name)[1].lstrip(".")
-            db.add_file_to_database(file_hash, file_name, file_ext)
-            existing_hashes.add(file_hash)
-            added_count += 1
-            if added_count % 100 == 0:
-                logger.debug(f"Added {added_count} new files to database")
-        except Exception as e:
-            logger.error(f"Error adding file to database: {file_path}: {str(e)}")
-            traceback.print_exc()
-
-    logger.info(f"Added a total of {added_count} new files to database")
-    return added_count
-
-
-def remove_nonexistent_files_from_database(articles_path: Optional[str] = None) -> int:
-    """Remove database entries for files that no longer exist on the filesystem.
-
-    Args:
-        articles_path: Path to the articles directory.
-
-    Returns:
-        int: Number of files removed from the database.
-    """
-    if not articles_path:
-        config = getConfig()
-        articles_path = config.get("articleFileFolder", "")
-        if not articles_path:
-            logger.error("Article file folder not found in config")
-            return 0
-
-    logger.debug(f"Checking for nonexistent files in database from: {articles_path}")
-    existing_files = {os.path.basename(path) for path in getArticlePathsForQuery("*")}
-    removed_count = db.remove_nonexistent_files(existing_files)
-    if removed_count > 0:
-        logger.info(
-            f"Removed {removed_count} entries for nonexistent files from database"
-        )
-    else:
-        logger.info("No nonexistent files found in database")
-    return removed_count
-
-
-def remove_orphaned_tags_from_database() -> int:
-    """Remove tags from the database that don't have any associated articles.
-
-    Returns:
-        int: Number of orphaned tags removed from the database.
-    """
-    logger.debug("Checking for orphaned tags in database")
-    removed_count = db.remove_orphaned_tags()
-    if removed_count > 0:
-        logger.info(f"Removed {removed_count} orphaned tags from database")
-    else:
-        logger.info("No orphaned tags found in database")
-    return removed_count
 
 
 if __name__ == "__main__":

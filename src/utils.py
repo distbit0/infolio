@@ -1,21 +1,16 @@
 import re
 import hashlib
-from io import StringIO, BytesIO
+from io import BytesIO
 from ipfs_cid import cid_sha256_hash_chunked
-from eldar import Query
 from typing import Iterable
 import glob
 import urlexpander
-from os import path
 import json
-from pathlib import Path
 import os
+from loguru import logger
 
 # import snscrape.modules.twitter as sntwitter
 # import snscrape
-import pysnooper
-import shutil
-import traceback
 
 
 def checkArticleSubject(articlePath, subjects):
@@ -43,61 +38,6 @@ def handle_cache(file_name, key, value=None):
         cache[key] = value
         with open(file_name, "w") as f:
             json.dump(cache, f)
-
-
-def delete_file_with_name(file_name, folder):
-    # Find all files with the file name in the folder using our enhanced function
-    # Delete all found files
-    # print(f"Deleting {file_name} from {folder}")
-    notFound = True
-    possibleExts = ["pdf", "epub"]
-    currentExt = file_name.split(".")[-1]
-    possibleExts.append(currentExt)
-    file_name = os.path.basename(file_name)
-    for ext in possibleExts:
-        try:
-            fileName = file_name.split(".")[0] + "." + ext
-            matching_file = os.path.join(folder, fileName)
-            homeDir = os.path.expanduser("~")
-            dest = os.path.join(homeDir, ".local/share/Trash/files/", fileName)
-            if os.path.exists(matching_file):
-                shutil.move(matching_file, dest)
-                print(f"Deleted {matching_file}")
-                notFound = False
-        except OSError:
-            pass
-    if notFound:
-        print(
-            f"File {file_name} not found in folder {folder}, with extensions {possibleExts}"
-        )
-
-
-def hide_file_with_name(orgFileName, folder):
-    possibleExts = ["pdf", "epub"]
-    currentExt = orgFileName.split(".")[-1]
-    orgFileName = os.path.basename(orgFileName)
-    possibleExts.append(currentExt)
-    notFound = True
-    for ext in possibleExts:
-        try:
-            fileName = ".".join(orgFileName.split(".")[:-1]) + "." + ext
-            matching_file = os.path.join(folder, fileName)
-            if os.path.exists(matching_file):
-                hiddenFileName = "." + fileName
-                if hiddenFileName == "." or fileName[0] == ".":
-                    continue
-                hiddenFilePath = os.path.join(folder, hiddenFileName)
-                print(f"HIDING {fileName} >> {hiddenFilePath}")
-                shutil.move(matching_file, hiddenFilePath)
-                notFound = False
-                return hiddenFilePath
-        except OSError:
-            pass
-    if notFound:
-        print(
-            f"File {orgFileName} not found in folder {folder}, with extensions {possibleExts}"
-        )
-    return orgFileName
 
 
 def formatUrl(url):
@@ -137,20 +77,6 @@ def getUrlOfArticle(articleFilePath):
     return extractedUrl
 
 
-def markArticlesWithUrlsAsRead(readUrls, articleFolder):
-    articleUrls = searchArticlesForQuery("*", [], "", ["html", "mhtml"])
-    articleUrls = {v: k for k, v in articleUrls.items()}
-    for url in readUrls:
-        if url in articleUrls:
-            try:
-                hide_file_with_name(
-                    articleUrls[url].split("/")[-1], getConfig()["articleFileFolder"]
-                )
-            except OSError:
-                print(f"Error hiding {articleUrls[url]}")
-        addUrlToUrlFile(url, getAbsPath("./../storage/markedAsReadArticles.txt"))
-
-
 def getUrlsFromFile(urlFile):
     allUrls = []
     with open(urlFile, "r") as allUrlsFile:
@@ -167,7 +93,7 @@ def removeDupesPreserveOrder(seq):
     return [x for x in seq if not (x in seen or seen_add(x))]
 
 
-def addUrlToUrlFile(urlOrUrls, urlFile, overwrite=False):
+def addUrlsToUrlFile(urlOrUrls, urlFile, overwrite=False):
     mode = "w" if overwrite else "a"
     with open(urlFile, mode) as allUrlsFile:
         if type(urlOrUrls) == type([]):
@@ -178,10 +104,6 @@ def addUrlToUrlFile(urlOrUrls, urlFile, overwrite=False):
             urlOrUrls = formatUrl(urlOrUrls)
             allUrlsFile.write(urlOrUrls + "\n")
 
-    removeDupeUrlsInFile(urlFile)
-
-
-def removeDupeUrlsInFile(urlFile):
     urls = getUrlsFromFile(urlFile)
     uniqueUrls = removeDupesPreserveOrder(urls)
     with open(urlFile, "w") as allUrlsFile:
@@ -294,8 +216,8 @@ def isValidBlog(url):
 
 
 def getAbsPath(relPath):
-    basepath = path.dirname(__file__)
-    fullPath = path.abspath(path.join(basepath, relPath))
+    basepath = os.path.dirname(__file__)
+    fullPath = os.path.abspath(os.path.join(basepath, relPath))
 
     return fullPath
 
@@ -308,150 +230,25 @@ def getConfig():
     return config
 
 
-def getArticlesFromList(listName):
-    """
-    Returns a list of article filenames from the .rlst file named `listName`.
-    If listName starts with '_', then any Syncthing conflict files are merged in
-    (only their article lines) and subsequently removed.
-    """
-
-    config_path = getConfig()["atVoiceFolderPath"]
-    listPath = os.path.join(config_path, ".config", listName + ".rlst")
-    rootPath = os.path.join(getConfig()["droidEbooksFolderPath"])
-
-    if not os.path.exists(listPath):
-        return []
-
-    def parse_article_lines(text):
-        """
-        Given the full text of a .rlst file, return (header_text, article_list).
-
-        - header_text is the lines up to the last occurrence of a "\n:" marker
-          (i.e., the "header" region). If no header is detected, returns None.
-        - article_list is the list of extracted article filenames.
-        """
-        text = text.strip()
-        if not text:
-            return None, []
-
-        lines = text.split("\n")
-
-        # Detect a header if there's a second line that starts with ":"
-        if len(lines) > 1 and lines[1].startswith(":"):
-            # Everything up to the last "\n:" is considered the header
-            parts = text.split("\n:")
-            # All parts except the last are the header
-            header_text = "\n:".join(parts[:-1]).rstrip("\n")
-            # The last part is what comes after the final header marker
-            tail = parts[-1].split("\n")
-            # tail[0] is the ":" line, so skip it
-            article_lines = tail[1:]
-        else:
-            # No header found
-            header_text = None
-            article_lines = lines
-
-        # Extract article filenames from article_lines
-        articles = []
-        for line in article_lines:
-            line = line.strip()
-            if not line:
-                continue
-            # The first token (split by tab) holds the path
-            parts = line.split("\t")
-            if parts:
-                if parts[0]:
-                    filePathRelativeToRoot = os.path.relpath(parts[0], rootPath)
-                    if filePathRelativeToRoot not in articles:
-                        articles.append(filePathRelativeToRoot)
-
-        return header_text, articles
-
-    # -------------------------------------------------------
-    # 1. Read and parse main file
-    # -------------------------------------------------------
-    with open(listPath, "r", encoding="utf-8") as f:
-        mainText = f.read()
-
-    mainHeader, mainArticles = parse_article_lines(mainText)
-
-    # -------------------------------------------------------
-    # 2. Check for conflict files only if listName starts with '_'
-    # -------------------------------------------------------
-    conflict_files = []
-    if listName.startswith("_"):
-        print("looking for sync conflict files")
-        baseName = os.path.basename(listPath)
-        extension = os.path.splitext(baseName)[1]
-        fileName = os.path.splitext(baseName)[0]
-        dirName = os.path.dirname(listPath)
-        pattern = fileName + ".sync-conflict-*" + extension
-        path = os.path.join(dirName, pattern)
-        print(f"Checking for conflict files in: {path}")
-        conflict_files = glob.glob(path)
-
-    # -------------------------------------------------------
-    # 3. Merge conflict articles (excluding their headers)
-    # -------------------------------------------------------
-    if conflict_files:
-        print(f"Found {len(conflict_files)} conflict files for {listName}")
-        for cfile in conflict_files:
-            try:
-                with open(cfile, "r", encoding="utf-8") as cf:
-                    ctext = cf.read()
-                # We only take the articles, ignoring conflict headers
-                _, conflictArticles = parse_article_lines(ctext)
-                for article in conflictArticles:
-                    if article not in mainArticles:
-                        mainArticles.append(article)
-            except Exception as e:
-                print(f"Error reading conflict file {cfile}: {e}")
-
-        # -------------------------------------------------------
-        # 4. Rewrite the main file with the merged articles
-        # -------------------------------------------------------
-        if mainHeader is not None:
-            newText = f"{mainHeader}\n:\n" + "\n".join(mainArticles)
-        else:
-            articlesWithRoot = [
-                os.path.join(rootPath, article) for article in mainArticles
-            ]
-            newText = "\n".join(articlesWithRoot)
-
-        try:
-            with open(listPath, "w", encoding="utf-8") as f:
-                f.write(newText)
-
-            # Delete the conflicts
-            for cfile in conflict_files:
-                try:
-                    os.remove(cfile)
-                except Exception as e:
-                    print(f"Error deleting conflict file {cfile}: {e}")
-        except Exception as e:
-            print(f"Error saving merged content to {listPath}: {e}")
-
-    # -------------------------------------------------------
-    # 5. Return final article list
-    # -------------------------------------------------------
-    return mainArticles
-
-
-def doesPathContainDotFolders(path):
-    for folder in path.split("/")[:-1]:
+def doesPathContainDotFolders(input_path):
+    for folder in input_path.split("/")[:-1]:
         if folder and folder[0] == ".":
             return True
     return False
 
 
-def getArticlePathsForQuery(
-    query, formats=[], folderPath="", fileName=None, recursive=False, readState=None
+def getArticlePaths(
+    formats=[],
+    folderPath="",
+    fileName=None,
+    recursive=False,
+    readState=None,
+    subjects=[],
 ):
     """
-    Get article paths matching the query, formats, and optional fileName.
+    Get article paths matching the formats, and optional fileName.
 
     Args:
-        query: Query to match against article paths (set to "*" for all articles)
         formats: List of file formats to include
         folderPath: Path to search in (default: from config)
         fileName: Optional specific filename to search for
@@ -463,7 +260,6 @@ def getArticlePathsForQuery(
     folderPath = folderPath if folderPath else getConfig()["articleFileFolder"]
     folderPath = (folderPath + "/").replace("//", "/")
     formats = getConfig()["docFormatsToMove"] if not formats else formats
-    formats = formats if query == "*" else ["html", "mhtml"]  # important!
     fileNamesToSkip = getConfig()["fileNamesToSkip"]
 
     # Treat fileName as a format if provided, otherwise use provided formats
@@ -483,10 +279,10 @@ def getArticlePathsForQuery(
     ]
     final_patterns = []
     for pattern in glob_patterns:
-        lastSegment = path.split(pattern)[-1]
+        lastSegment = os.path.split(pattern)[-1]
         if readState == "read":
             lastSegment = f".{lastSegment}"
-        firstSegments = path.split(pattern)[:-1]
+        firstSegments = os.path.split(pattern)[:-1]
         pattern = os.path.join(*firstSegments, lastSegment)
         final_patterns.append(pattern)
 
@@ -503,161 +299,32 @@ def getArticlePathsForQuery(
             ]
             allArticlesPaths.extend(matching_paths)
         except Exception as e:
-            print(f"Error in glob pattern {pattern}: {e}")
+            logger.error(f"Error in glob pattern {pattern}: {e}")
 
     allArticlesPaths = [
         path
         for path in allArticlesPaths
         if not any(skip in path for skip in fileNamesToSkip)
     ]
+    if subjects:
+        allArticlesPaths = [
+            path for path in allArticlesPaths if checkArticleSubject(path, subjects)
+        ]
     allArticlesPaths = list(set(allArticlesPaths))
     return allArticlesPaths
 
 
-def searchArticlesForQuery(query, subjects=[], readState="", formats=[], path=""):
-    searchFilter = Query(query, ignore_case=True, match_word=False, ignore_accent=False)
+def getArticleUrls(subjects=[], readState=""):
     matchingArticles = {}
-    allArticlesPaths = []
-    if (
-        "pdf" in formats and query != "*" and path == ""
-    ):  # i.e. if we want to search in the text of the pdf files
-        formats.remove("pdf")
-    allArticlesPaths.extend(
-        getArticlePathsForQuery(query, formats, path, readState=readState)
+    allArticlesPaths = getArticlePaths(
+        ["html", "mhtml"], "", readState=readState, subjects=subjects
     )
-
     for articlePath in allArticlesPaths:
-        skipBecauseReadState = False
-        if readState:
-            if readState == "read":
-                isRead = articlePath.split("/")[-1][0] == "."
-                skipBecauseReadState = not isRead
-            elif readState == "unread":
-                isUnread = articlePath.split("/")[-1][0] != "."
-                skipBecauseReadState = not isUnread
-        invalidSubject = not checkArticleSubject(articlePath, subjects)
-
-        if skipBecauseReadState or invalidSubject:
-            continue
-
-        matchInAricle = (
-            True
-            if query == "*"
-            else searchFilter(open(articlePath, errors="ignore").read().strip())
-        )
-
-        if not matchInAricle:
-            continue
-
-        matchingArticles[articlePath] = getUrlOfArticle(articlePath)
+        articleUrl = getUrlOfArticle(articlePath)
+        if articleUrl:
+            matchingArticles[articlePath] = articleUrl
 
     return matchingArticles
-
-
-def createListIfNotExists(listPath):
-    exists = os.path.exists(listPath)
-    if not exists:
-        open(listPath, "a").close()
-    return True
-
-
-def deleteListIfExists(listName):
-    listPath = os.path.join(
-        getConfig()["atVoiceFolderPath"], ".config", listName + ".rlst"
-    )
-    if os.path.exists(listPath):
-        print(f"deleting disabled list: {listName}")
-        os.remove(listPath)
-
-
-def addArticlesToList(listName, articlePathsForList):
-    listPath = os.path.join(
-        getConfig()["atVoiceFolderPath"], ".config", listName + ".rlst"
-    )
-    createListIfNotExists(listPath)
-    articleNamesInList = [line.split("/")[-1] for line in getArticlesFromList(listName)]
-    droidEbooksFolderPath = getConfig()["droidEbooksFolderPath"]
-    articleFileFolder = getConfig()["articleFileFolder"]
-    linesToAppend = []
-    for articlePath in articlePathsForList:
-        articleName = articlePath.split("/")[-1]
-        relativeArticlePath = os.path.relpath(articlePath, articleFileFolder)
-        droidArticlePath = os.path.join(droidEbooksFolderPath, relativeArticlePath)
-        if articleName not in articleNamesInList:
-            displayName = articleName.split(".")[0]
-            # print(f"Adding {articleName} to list {listName}")
-            linesToAppend.append(droidArticlePath + "\t" + displayName)
-    newListText = "\n".join(linesToAppend) + "\n" if linesToAppend else ""
-
-    # Read the current list content safely
-    currentListText = ""
-    if os.path.exists(listPath):
-        with open(listPath, "r") as f:
-            currentListText = f.read().strip()
-
-    headers, existingArticleListText = "", ""
-
-    # Handle list format safely, checking for sufficient lines and format
-    if currentListText:
-        lines = currentListText.split("\n")
-        # Check if we have at least 2 lines and the second line starts with ":"
-        if len(lines) > 1 and lines[1].startswith(":"):
-            existingArticleListText = "\n".join(
-                currentListText.split("\n:")[-1].split("\n")[1:]
-            )
-            headers = (
-                currentListText.replace(existingArticleListText, "").strip() + "\n"
-            )
-        else:
-            # Simple format with no headers
-            existingArticleListText = currentListText
-
-    articleList = newListText + existingArticleListText
-    # remove duplicates from existingArticleListText, deleting articles at the top of the list first and while preserving the order
-    deDupedArticleListText = []
-    seen = set()
-    for line in articleList.split("\n"):
-        fileName = line.split("\t")[0].split("/")[-1].lower()
-        if fileName not in seen:
-            seen.add(fileName)
-            deDupedArticleListText.append(line)
-    articleList = "\n".join(deDupedArticleListText)
-
-    combinedListText = headers + articleList
-    if len(linesToAppend) > 0:
-        print(
-            "\n\n\n\nAdding the following articles to list: "
-            + listName
-            + "\n"
-            + newListText
-        )
-
-    if len(linesToAppend) > 0:
-        with open(listPath, "w") as f:
-            f.write(combinedListText)
-
-
-def deleteAllArticlesInList(listName):
-    listPath = os.path.join(
-        getConfig()["atVoiceFolderPath"], ".config", listName + ".rlst"
-    )
-    createListIfNotExists(listPath)
-    currentListText = open(listPath).read().strip()
-
-    textWithArticlesRemoved = ""
-    if "\n:m" not in currentListText:
-        # print(f":m not found in list {listName}")
-        textWithArticlesRemoved = ""
-    else:
-        textWithArticlesRemoved = (
-            "\n:m".join(currentListText.split("\n:m")[:-1])
-            + "\n:m"
-            + currentListText.split("\n:m")[-1].split("\n")[0]
-            + "\n"
-        )  # i.e. currentListText.split("\n:m")[-1].split("\n")[0] refers to the last line in the doc which starts with :m
-
-    with open(listPath, "w") as f:
-        f.write(textWithArticlesRemoved)
 
 
 def getSrcUrlOfGitbook(articlePath):
@@ -696,3 +363,120 @@ def calculate_normal_hash(file_path):
             hasher.update(f.read(4096))
 
     return hasher.hexdigest()
+
+
+def get_directory_snapshot(directory_path):
+    """Get a snapshot of all files in a directory with their modification times."""
+    snapshot = {}
+    try:
+        # Since all files are in root directory, use os.listdir instead of os.walk
+        for filename in os.listdir(directory_path):
+            file_path = os.path.join(directory_path, filename)
+
+            # Skip if not a file
+            if not os.path.isfile(file_path):
+                continue
+
+            try:
+                stat = os.stat(file_path)
+                snapshot[file_path] = {
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime,
+                }
+            except (OSError, FileNotFoundError):
+                # File might have been deleted between listdir and stat
+                continue
+    except FileNotFoundError:
+        logger.warning(f"Directory not found: {directory_path}")
+    return snapshot
+
+
+def log_directory_diff(before_snapshot, after_snapshot, directory_name):
+    """Log the differences between two directory snapshots."""
+    added_files = set(after_snapshot.keys()) - set(before_snapshot.keys())
+    removed_files = set(before_snapshot.keys()) - set(after_snapshot.keys())
+    modified_files = []
+
+    for file_path in set(before_snapshot.keys()) & set(after_snapshot.keys()):
+        if (
+            before_snapshot[file_path]["size"] != after_snapshot[file_path]["size"]
+            or before_snapshot[file_path]["mtime"] != after_snapshot[file_path]["mtime"]
+        ):
+            modified_files.append(file_path)
+
+    if added_files or removed_files or modified_files:
+        logger.info(f"=== {directory_name} Directory Changes ===")
+
+        if added_files:
+            logger.info(f"Added files ({len(added_files)}):")
+            for file_path in sorted(added_files):
+                logger.info(f"  + {file_path}")
+
+        if removed_files:
+            logger.info(f"Removed files ({len(removed_files)}):")
+            for file_path in sorted(removed_files):
+                logger.info(f"  - {file_path}")
+
+        if modified_files:
+            logger.info(f"Modified files ({len(modified_files)}):")
+            for file_path in sorted(modified_files):
+                logger.info(f"  ~ {file_path}")
+
+        logger.info(f"=== End {directory_name} Changes ===")
+    else:
+        logger.info(f"No changes detected in {directory_name}")
+
+
+def removeIllegalChars(pdfTitle):
+    illegalChars = utils.getConfig()["illegalFileNameChars"]
+    for char in illegalChars:
+        pdfTitle = pdfTitle.replace(char, "")
+
+    return pdfTitle
+
+
+def getArxivTitle(arxiv_id):
+    # Make a request to the arXiv API to get the metadata for the paper
+    logger.info(f"Getting arXiv title for: {arxiv_id}")
+    res = requests.get(f"http://export.arxiv.org/api/query?id_list={arxiv_id}")
+
+    # Check if the request was successful
+    if res.status_code != 200:
+        return "Error: Could not retrieve paper information"
+
+    # Extract the title from the response
+    data = res.text.replace("\n", "").replace("\t", "")
+    # print(data)
+    start = data.index("</published>    <title>") + len("</published>    <title>")
+    end = data.index("</title>    <summary>")
+    # print(start, end)
+    title = data[start:end]
+    return title
+
+
+def getDOITitle(doi):
+    # Make a request to the CrossRef API to get the metadata for the paper
+    headers = {"Accept": "application/json"}
+    res = requests.get(f"https://api.crossref.org/v1/works/{doi}", headers=headers)
+
+    # Check if the request was successful
+    if res.status_code != 200:
+        return "Error: Could not retrieve paper information"
+
+    # Extract the title from the response
+    data = res.json()
+    title = data["message"]["title"][0]
+    return title
+
+
+def get_id_type(paper_id):
+    # Check if the given string is a valid arXiv ID
+    if re.match(r"^\d+\.\d+$", paper_id):
+        return "arxiv"
+
+    # Check if the given string is a valid DOI
+    if paper_id.startswith("10."):
+        return "doi"
+
+    # If the string is neither an arXiv ID nor a DOI, return False
+    return False

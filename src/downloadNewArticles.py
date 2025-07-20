@@ -1,21 +1,72 @@
 import os
 import ssl
 import time
+import json
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import requests
-from selenium import webdriver
 from urllib.parse import urlparse
-from .utils import getConfig, addUrlToUrlFile, getAbsPath, formatUrl
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import markdown
-
+from loguru import logger
+from . import utils
 
 requests.packages.urllib3.disable_warnings()
+
+
+def calcUrlsToAdd(onlyRead=False):
+    bookmarksFilePath = utils.getConfig()["bookmarksFilePath"]
+    with open(bookmarksFilePath) as f:
+        bookmarks = json.load(f)
+
+    urlsToAdd = {}
+
+    if onlyRead:
+        markedAsReadUrls = utils.getUrlsFromFile(
+            utils.getAbsPath("../storage/markedAsReadArticles.txt")
+        )
+
+    allAddedUrls = utils.getUrlsFromFile(
+        utils.getAbsPath("../storage/alreadyAddedArticles.txt")
+    )
+    bmBar = bookmarks["roots"]["bookmark_bar"]["children"]
+    for folder in bmBar:
+        if folder["type"] == "folder" and folder["name"] == "@Voice":
+            for folder in folder["children"]:
+                subject = folder["name"]
+                if onlyRead and subject.lower() == "unread":
+                    continue
+                urlsToAdd[subject] = []
+                for link in folder["children"]:
+                    url = link["url"]
+                    url = utils.formatUrl(url)
+                    if onlyRead:
+                        if (
+                            url.lower() not in "\n".join(markedAsReadUrls).lower()
+                            and url.lower() in "\n".join(allAddedUrls).lower()
+                        ):
+                            url = convertLinks(url, False, True)
+                            if url and url[0]:
+                                url = url[0]
+                                if (
+                                    url.lower()
+                                    not in "\n".join(markedAsReadUrls).lower()
+                                    and url.lower() in "\n".join(allAddedUrls).lower()
+                                ):
+                                    urlsToAdd[subject].append(url)
+                                    logger.info(f"added url: {url}")
+                    else:
+                        if url.lower() not in "\n".join(allAddedUrls).lower():
+                            url = convertLinks(url, False, True)
+                            if url and url[0]:
+                                url = url[0]
+                                if url.lower() not in "\n".join(allAddedUrls).lower():
+                                    urlsToAdd[subject].append(url)
+                                    logger.info(f"added url: {url}")
+
+    return urlsToAdd
 
 
 def save_text_as_html(url):
@@ -33,20 +84,21 @@ def save_text_as_html(url):
 
 
 def downloadNewArticles(urlsToAdd):
-    saveDirectory = getConfig()["pdfSourceFolders"][0]
-    print(urlsToAdd)
+    saveDirectory = utils.getConfig()["pdfSourceFolders"][0]
+    logger.info(f"URLs to add: {urlsToAdd}")
     for url in urlsToAdd:
         urlCopy = str(url)
         if url.endswith(".pdf"):
             continue
-        print(f"trying to download: {url}")
+        logger.info(f"trying to download: {url}")
         try:
             save_mobile_article_as_mhtml(url, saveDirectory)
         except Exception as e:
-            print(f"Error downloading article: {url} {e}")
+            logger.error(f"Error downloading article: {url} {e}")
         else:
-            addUrlToUrlFile(
-                [formatUrl(urlCopy)], getAbsPath("../storage/alreadyAddedArticles.txt")
+            utils.addUrlsToUrlFile(
+                [utils.formatUrl(urlCopy)],
+                utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
             )
 
     # Add downloaded URLs to alreadyAddedArticles.txt
@@ -67,25 +119,24 @@ def save_webpage_as_mhtml(url, timeout=10, min_load_time=5):
     chrome_options.add_argument("--headless")
     driver = webdriver.Chrome(options=chrome_options)
 
-    # try:
-    start_time = time.time()
-    driver.get(url)
-    wait = WebDriverWait(driver, timeout)
-    wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-    body_load_time = time.time() - start_time
-    remaining_time = max(0, min_load_time - body_load_time)
-    time.sleep(remaining_time)
+    try:
+        start_time = time.time()
+        driver.get(url)
+        wait = WebDriverWait(driver, timeout)
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        body_load_time = time.time() - start_time
+        remaining_time = max(0, min_load_time - body_load_time)
+        time.sleep(remaining_time)
 
-    title = driver.title
-    title = "".join(c for c in title if c.isalnum() or c.isspace()).rstrip()
+        title = driver.title
+        title = "".join(c for c in title if c.isalnum() or c.isspace()).rstrip()
 
-    driver.execute_cdp_cmd("Page.captureSnapshot", {"format": "mhtml"})
-    mhtml_data = driver.execute_cdp_cmd(
-        "Page.captureSnapshot", {"format": "mhtml"}
-    )["data"]
+        mhtml_data = driver.execute_cdp_cmd(
+            "Page.captureSnapshot", {"format": "mhtml"}
+        )["data"]
 
-    # finally:
-    #     driver.quit()
+    finally:
+        driver.quit()
 
     return mhtml_data, title
 
@@ -107,11 +158,11 @@ def save_mobile_article_as_mhtml(url, saveDirectory, timeout=10, min_load_time=5
     )
     if downloadAsHtml:
         fileExt = ".html"
-        print(f"saving url: {url} as text")
+        logger.info(f"saving url: {url} as text")
         htmlText, title = save_text_as_html(url)
     else:
         fileExt = ".mhtml"
-        print(f"saving url: {url} as webpage")
+        logger.info(f"saving url: {url} as webpage")
         htmlText, title = save_webpage_as_mhtml(url, timeout, min_load_time)
 
     file_path = os.path.join(saveDirectory, f"{title}{fileExt}")
