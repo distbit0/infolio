@@ -70,9 +70,9 @@ def main():
         downloadNewArticles.calcUrlsToAdd(onlyRead=True)["AlreadyRead"],
     )
     logger.info("add file hashes to already added files")
-    manageDocs.addFileHashesToAlreadyAdded()
+    manageDocs.addFilesToAlreadyAddedList()
     logger.info("add read file hashes to marked as read files")
-    manageDocs.addReadFilesHashesToMarkedAsRead()
+    manageDocs.addReadFilesToMarkedAsReadList()
     logger.info("delete duplicate files")
     manageDocs.deleteDuplicateArticleFiles()
     manageDocs.deleteDuplicateFiles()

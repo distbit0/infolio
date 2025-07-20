@@ -20,16 +20,6 @@ log_file_path = os.path.join(
 )
 os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 
-# Remove default handler and add custom handlers
-logger.remove()
-logger.add(
-    log_file_path,
-    rotation="5 MB",
-    retention=3,
-    level="WARNING",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}",
-)
-
 
 class TextExtractionError(Exception):
     """Custom exception for text extraction errors.

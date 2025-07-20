@@ -20,17 +20,6 @@ LOG_FILE_PATH = LOG_DIR / "tagging.log"
 
 LOG_DIR.mkdir(exist_ok=True, parents=True)
 
-# Configure loguru logger
-logger.remove()
-logger.add(sys.stdout, level="INFO")
-logger.add(
-    LOG_FILE_PATH,
-    rotation="5 MB",
-    retention=3,
-    level="WARNING",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}",
-)
-
 
 def load_environment_variables() -> None:
     """Load environment variables from a .env file."""
@@ -732,7 +721,6 @@ def tagArticles(all_tags=True, limit=None, analyze=None, debug=False):
         debug = args.debug
 
     if debug:
-        logger.remove()
         logger.add(sys.stdout, level="DEBUG")
 
     if analyze:

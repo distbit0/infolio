@@ -70,52 +70,50 @@ def hide_file_with_name(orgFileName):
     return orgFileName
 
 
-def addFileHashesToAlreadyAdded():
-    nonHtmlFormats = utils.getConfig()["docFormatsToMove"]
-    nonHtmlFormats = [fmt for fmt in nonHtmlFormats if fmt not in ["html", "mhtml"]]
-    listFile = utils.getAbsPath("../storage/alreadyAddedArticles.txt")
-    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats)
-    alreadyAddedFileNames = str(utils.getUrlsFromFile(listFile)).lower()
-    fileNames = [
-        os.path.basename(filePath)
-        for filePath in matchingArticles
-        if os.path.basename(filePath) not in alreadyAddedFileNames
-    ]
-    fileHashes = [
-        utils.calculate_normal_hash(filePath)
-        for filePath in matchingArticles
-        if os.path.basename(filePath) not in alreadyAddedFileNames
-    ]
-    itemsToAdd = list(set(fileNames + fileHashes))
-    utils.addUrlsToUrlFile(itemsToAdd, listFile)
-
-
-def addReadFilesHashesToMarkedAsRead():
+def addFilesToAlreadyAddedList():
     nonHtmlFormats = [
         fmt
         for fmt in utils.getConfig()["docFormatsToMove"]
         if fmt not in ["html", "mhtml"]
     ]
     listFile = utils.getAbsPath("../storage/alreadyAddedArticles.txt")
-    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats, readState="read")
-    alreadyMarkedAsReadFileNames = utils.getUrlsFromFile(listFile)
+    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats)
+    alreadyAddedFileNames = str(utils.getUrlsFromFile(listFile)).lower()
     fileNames = [
         os.path.basename(filePath)
         for filePath in matchingArticles
-        if os.path.basename(filePath) not in alreadyMarkedAsReadFileNames
+        if os.path.basename(filePath).lower() not in alreadyAddedFileNames
     ]
     fileHashes = [
         utils.calculate_normal_hash(filePath)
         for filePath in matchingArticles
-        if os.path.basename(filePath) not in alreadyMarkedAsReadFileNames
+        if os.path.basename(filePath).lower() not in alreadyAddedFileNames
     ]
     itemsToAdd = list(set(fileNames + fileHashes))
     utils.addUrlsToUrlFile(itemsToAdd, listFile)
 
-    fileHashes = [
-        utils.calculate_normal_hash(filePath) for filePath in matchingArticles
+
+def addReadFilesToMarkedAsReadList():
+    nonHtmlFormats = [
+        fmt
+        for fmt in utils.getConfig()["docFormatsToMove"]
+        if fmt not in ["html", "mhtml"]
     ]
-    utils.addUrlsToUrlFile(fileHashes, listFile)
+    listFile = utils.getAbsPath("../storage/markedAsReadArticles.txt")
+    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats, readState="read")
+    alreadyMarkedAsReadFileNames = str(utils.getUrlsFromFile(listFile)).lower()
+    fileNames = [
+        os.path.basename(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath).lower() not in alreadyMarkedAsReadFileNames
+    ]
+    fileHashes = [
+        utils.calculate_normal_hash(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath).lower() not in alreadyMarkedAsReadFileNames
+    ]
+    itemsToAdd = list(set(fileNames + fileHashes))
+    utils.addUrlsToUrlFile(itemsToAdd, listFile)
 
 
 def deleteFilesMarkedToDelete():
@@ -128,15 +126,14 @@ def deleteFilesMarkedToDelete():
 def hideArticlesMarkedAsRead():
     markedAsReadFiles = manageLists.getArticlesFromList("_READ")
     for fileName in markedAsReadFiles:
-        newPath = hide_file_with_name(fileName)
-        if newPath:
-            try:
-                utils.addUrlsToUrlFile(
-                    utils.getUrlOfArticle(newPath),
-                    utils.getAbsPath("../storage/markedAsReadArticles.txt"),
-                )
-            except FileNotFoundError:
-                logger.error(f"Failed to mark {fileName} as read")
+        try:
+            utils.addUrlsToUrlFile(
+                utils.getUrlOfArticle(fileName),
+                utils.getAbsPath("../storage/markedAsReadArticles.txt"),
+            )
+            hide_file_with_name(fileName)
+        except Exception as e:
+            logger.error(f"Failed to mark {fileName} as read: {e}")
     manageLists.deleteAllArticlesInList("_READ")
 
 
@@ -220,19 +217,20 @@ def moveDocsToTargetFolder():
 
     alreadyAddedHashes = str(
         utils.getUrlsFromFile(utils.getAbsPath("../storage/alreadyAddedArticles.txt"))
-    )
-    markedAsReadHashes = str(
-        utils.getUrlsFromFile(utils.getAbsPath("../storage/markedAsReadArticles.txt"))
-    )
+    ).lower()
 
     for docPath in docPaths:
         docHash = utils.calculate_normal_hash(docPath)
-        if docHash in alreadyAddedHashes:
+        docHashIsInAlreadyAdded = docHash.lower() in alreadyAddedHashes
+        docUrl = utils.formatUrl(utils.getUrlOfArticle(docPath))
+        docUrlIsInAlreadyAdded = docUrl.lower() in alreadyAddedHashes
+
+        if docHashIsInAlreadyAdded or docUrlIsInAlreadyAdded:
             logger.warning(f"Skipping importing duplicate file: {docPath}")
             docFileName = os.path.basename(docPath)
             homeDir = os.path.expanduser("~")
             erroDocPath = os.path.join(
-                homeDir, ".local/share/Trash/files/", "DUPLICATE_" + docFileName
+                homeDir, ".local/share/Trash/files/", "IMPORT_DUPE_" + docFileName
             )
             if os.path.exists(erroDocPath):
                 logger.warning(f"File {docPath} already in trash")
@@ -252,15 +250,11 @@ def moveDocsToTargetFolder():
 
         targetPath = os.path.join(targetFolder, uniqueName)
 
-        if docHash in markedAsReadHashes:
-            targetPath = os.path.join(targetFolder, "." + uniqueName)
-            logger.info(f"Marking as read: {docName}")
-
         logger.info(f"Moving {docName} to {targetPath} derived from {docPath}")
         shutil.move(docPath, targetPath)
 
         utils.addUrlsToUrlFile(
-            [docHash, os.path.basename(targetPath)],
+            [docHash, docUrl, os.path.basename(targetPath)],
             utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
         )
 

@@ -31,16 +31,6 @@ log_file_path = os.path.join(
 )
 os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 
-logger.remove()
-logger.add(sys.stdout, level="DEBUG")
-logger.add(
-    log_file_path,
-    rotation="5 MB",
-    retention=3,
-    level="WARNING",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}",
-)
-
 # Load environment variables from one of multiple potential .env locations
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 potential_env_paths = [

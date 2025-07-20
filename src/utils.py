@@ -43,6 +43,8 @@ def handle_cache(file_name, key, value=None):
 
 
 def formatUrl(url):
+    if "http" not in url:
+        return url
     if "t.co/" in url:
         url = urlexpander.expand(url)
     url = url.replace("medium.com", "scribe.rip").strip()
