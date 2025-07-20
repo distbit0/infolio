@@ -1,0 +1,5106 @@
+// File: /home/pimania/dev/infolio/src/utils.py
+import re
+import hashlib
+from io import BytesIO
+from ipfs_cid import cid_sha256_hash_chunked
+from typing import Iterable
+import glob
+import urlexpander
+import json
+import os
+from pathlib import Path
+from urllib.parse import urlparse
+from loguru import logger
+import requests
+
+# import snscrape.modules.twitter as sntwitter
+# import snscrape
+
+
+def checkArticleSubject(articlePath, subjects):
+    if not subjects:
+        return True
+    # articlePath = "/".join(articlePath.split("/")[:-1]) commented out because sometimes I want to filter by the filename e.g. to find yt videos
+    for subject in subjects:
+        if subject.lower() in articlePath.lower():
+            return True
+    return False
+
+
+def handle_cache(file_name, key, value=None):
+    # Load existing cache or initialize an empty cache if the file does not exist
+    cache = {}
+    if os.path.exists(file_name):
+        with open(file_name, "r") as f:
+            cache = json.load(f)
+
+    if value is None:
+        # Get the value from cache
+        return cache.get(key)
+    else:
+        # Write value to cache
+        cache[key] = value
+        with open(file_name, "w") as f:
+            json.dump(cache, f)
+
+
+def formatUrl(url):
+    if "http" not in url:
+        return url
+    if "t.co/" in url:
+        url = urlexpander.expand(url)
+    url = url.replace("medium.com", "scribe.rip").strip()
+    url = url.replace("en.m.wikipedia.org", "en.wikipedia.org").strip()
+    if "gist.github.com" in url:
+        usernameIsInUrl = len(url.split("/")) > 4
+        if usernameIsInUrl:
+            url = "https://gist.github.com/" + url.split("/")[-1]
+
+    url = re.sub(r"\?gi=.*", r"", url)
+    url = re.sub(r"\&gi=.*", r"", url)
+    if "discord.com" in url:
+        url = url.replace("#update", "")
+    url = url.replace("###", "##")  # so that it isn't force refreshed in convertLinks
+    return url
+
+
+def getUrlOfArticle(articleFilePath):
+    extractedUrl = ""
+    articleExtension = os.path.splitext(articleFilePath)[1][
+        1:
+    ].lower()  # Remove leading dot
+
+    if articleExtension not in ["txt", "html", "mhtml"]:
+        return ""
+
+    with open(articleFilePath, errors="ignore") as _file:
+        fileText = _file.read()
+        urlPatterns = getConfig()["urlPatterns"]
+        for urlPattern in urlPatterns:
+            match = re.search(urlPattern, fileText)
+            if match:
+                extractedUrl = formatUrl(match.group(1).strip())
+                break
+
+    return extractedUrl
+
+
+def getUrlsFromFile(urlFile):
+    allUrls = []
+    with open(urlFile, "r") as allUrlsFile:
+        fileText = allUrlsFile.read().strip()
+        for url in fileText.strip().split("\n"):
+            url = formatUrl(url)
+            allUrls.append(url)
+    return allUrls
+
+
+def removeDupesPreserveOrder(seq):
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
+
+
+def addUrlsToUrlFile(urlOrUrls, urlFile, overwrite=False):
+    mode = "w" if overwrite else "a"
+    with open(urlFile, mode) as allUrlsFile:
+        if type(urlOrUrls) == type([]):
+            for url in urlOrUrls:
+                url = formatUrl(url)
+                allUrlsFile.write(url + "\n")
+        else:
+            urlOrUrls = formatUrl(urlOrUrls)
+            allUrlsFile.write(urlOrUrls + "\n")
+
+    urls = getUrlsFromFile(urlFile)
+    uniqueUrls = removeDupesPreserveOrder(urls)
+    with open(urlFile, "w") as allUrlsFile:
+        for url in uniqueUrls:
+            allUrlsFile.write(url + "\n")
+
+
+def getTwitterAccountFromTweet(tweet_id):
+    return "NO USERNAME FOUND"
+
+
+#     # Create a TwitterTweetScraper object for the given tweet_id
+#     username = handle_cache(getAbsPath("./../storage/twitter_handles.json"), tweet_id)
+#     if username != None:
+#         return username
+#
+#     scraper = sntwitter.TwitterTweetScraper(tweet_id)
+#
+#     # Use the get_items method to get the tweet
+#     try:
+#         for i, tweet in enumerate(scraper.get_items()):
+#             if i == 1:
+#                 break
+#     except snscrape.base.ScraperException:
+#         handle_cache(
+#             getAbsPath("./../storage/twitter_handles.json"), tweet_id, ""
+#         )
+#         return ""
+#
+#     # Access the 'user' attribute of the tweet, which is a User object,
+#     # and then access the 'username' attribute of the User object
+#     handle_cache(
+#         getAbsPath("./../storage/twitter_handles.json"), tweet_id, tweet.user.username
+#     )
+#     return tweet.user.username
+
+
+def getBlogFromUrl(url):
+    url = url.replace("nitter.net", "twitter.com")
+    if "https://scribe.rip" in url and url.count("/") < 4:
+        pass
+    if "gist.github.com" in url:
+        matches = re.search(r"(https:\/\/gist.github.com\/.*)\/", url)
+    elif "https://scribe.rip" in url:
+        matches = re.search(r"(https:\/\/scribe.rip\/[^\/]*)\/", url)
+    elif "https://medium.com" in url:
+        matches = re.search(r"(https:\/\/medium.com\/[^\/]*)\/", url)
+    elif ".scribe.rip" in url:
+        matches = re.search(r"(https:\/\/.*\.scribe.rip\/)", url)
+    elif ".medium.com" in url:
+        matches = re.search(r"(https:\/\/.*\.medium.com\/)", url)
+    elif "https://mirror.xyz" in url:
+        matches = re.search(r"(https:\/\/mirror.xyz\/.*?)\/", url)
+    elif "https://write.as" in url:
+        matches = re.search(r"(https:\/\/write.as\/.*?)\/", url)
+    elif "twitter.com" in url and "/status/" in url:
+        url = url.strip("/")
+        matches = re.search(r"(https:\/\/twitter.com\/.*?)\/status\/.*", url)
+    elif "twitter.com" in url and "/status/" not in url:
+        url = url.strip("/")
+        matches = re.search(r"(https:\/\/twitter.com\/.*)", url)
+    elif "https://threadreaderapp" in url:
+        matches = re.search(r"(.*)", "")
+        url = url.strip("/").replace(".html", "")
+        tweetId = re.search(r"https:\/\/threadreaderapp.com\/thread\/(.*)", url)
+        if tweetId.group(1):
+            twitterAccount = getTwitterAccountFromTweet(tweetId.group(1))
+            if twitterAccount:
+                twitterAccountUrl = "https://twitter.com/" + twitterAccount
+                matches = re.search(r"(.*)", twitterAccountUrl)
+    else:
+        matches = re.search(r"^(http[s]*:\/\/[^\/]+)", url)
+
+    if matches:
+        blog = matches.group(1).strip()
+    else:
+        blog = url
+    blog = blog.rstrip("/")
+
+    return blog
+
+
+def getBlogsFromUrls(urls):
+    blogUrls = []
+    for url in urls:
+        if isValidBlog(url):
+            blogUrl = getBlogFromUrl(url)
+            if blogUrl:
+                blogUrls.append(blogUrl)
+
+    return blogUrls
+
+
+def getInvalidBlogSubstrings():
+    invalidBlogSubstrings = getConfig()["invalidBlogSubstrings"]
+    return invalidBlogSubstrings
+
+
+def isValidBlog(url):
+    validBlog = True
+    invalidBlogSubstrings = getInvalidBlogSubstrings()
+    for substring in invalidBlogSubstrings:
+        if substring.lower() in url.lower():
+            validBlog = False
+
+    if not url.startswith("http"):
+        validBlog = False
+
+    return validBlog
+
+
+def getAbsPath(relPath):
+    basepath = os.path.dirname(__file__)
+    fullPath = os.path.abspath(os.path.join(basepath, relPath))
+
+    return fullPath
+
+
+def getConfig():
+    configFileName = getAbsPath("../config.json")
+    with open(configFileName) as config:
+        config = json.loads(config.read())
+
+    return config
+
+
+def doesPathContainDotFolders(input_path):
+    path_obj = Path(input_path)
+    # Check all parent directories (excluding the file itself)
+    for part in path_obj.parent.parts:
+        if part and part.startswith("."):
+            return True
+    return False
+
+
+def getArticlePaths(
+    formats=[],
+    folderPath="",
+    fileName=None,
+    recursive=False,
+    readState=None,
+    subjects=[],
+):
+    """
+    Get article paths matching the formats, and optional fileName.
+
+    Args:
+        formats: List of file formats to include
+        folderPath: Path to search in (default: from config)
+        fileName: Optional specific filename to search for
+
+    Returns:
+        List of article paths matching the criteria
+    """
+    globWildcard = "**" if recursive else "*"
+    folderPath = folderPath if folderPath else getConfig()["articleFileFolder"]
+    folderPath = (folderPath + "/").replace("//", "/")
+    formats = getConfig()["docFormatsToMove"] if not formats else formats
+    fileNamesToSkip = getConfig()["fileNamesToSkip"]
+
+    # Treat fileName as a format if provided, otherwise use provided formats
+    search_targets = [glob.escape(fileName)] if fileName else formats
+    # Create glob patterns for both root and recursive searches
+
+    # Create the glob patterns
+    glob_patterns = [
+        *(
+            (
+                os.path.join(folderPath, globWildcard, f"{target}")
+                if recursive
+                else os.path.join(folderPath, f"{globWildcard}{target}")
+            )
+            for target in search_targets
+        ),  # Recursively
+    ]
+    final_patterns = []
+    for pattern in glob_patterns:
+        lastSegment = os.path.split(pattern)[-1]
+        if readState == "read":
+            lastSegment = f".{lastSegment}"
+        firstSegments = os.path.split(pattern)[:-1]
+        pattern = os.path.join(*firstSegments, lastSegment)
+        final_patterns.append(pattern)
+
+    glob_patterns = final_patterns
+    include_hidden = False if readState == "unread" else True
+    allArticlesPaths = []
+    for pattern in glob_patterns:
+        try:
+            matching_paths = glob.glob(
+                pattern, recursive=recursive, include_hidden=include_hidden
+            )
+            matching_paths = [
+                path for path in matching_paths if not doesPathContainDotFolders(path)
+            ]
+            allArticlesPaths.extend(matching_paths)
+        except Exception as e:
+            logger.error(f"Error in glob pattern {pattern}: {e}")
+
+    allArticlesPaths = [
+        path
+        for path in allArticlesPaths
+        if not any(skip in path for skip in fileNamesToSkip)
+    ]
+    if subjects:
+        allArticlesPaths = [
+            path for path in allArticlesPaths if checkArticleSubject(path, subjects)
+        ]
+    allArticlesPaths = list(set(allArticlesPaths))
+    return allArticlesPaths
+
+
+def getArticleUrls(subjects=[], readState=""):
+    matchingArticles = {}
+    allArticlesPaths = getArticlePaths(
+        ["html", "mhtml"], "", readState=readState, subjects=subjects
+    )
+    for articlePath in allArticlesPaths:
+        articleUrl = getUrlOfArticle(articlePath)
+        if articleUrl:
+            matchingArticles[articlePath] = articleUrl
+
+    return matchingArticles
+
+
+def getSrcUrlOfGitbook(articlePath):
+    htmlText = open(articlePath, errors="ignore").read()
+    if '" rel="nofollow">Original</a></p>' in htmlText:
+        srcUrl = htmlText.split('" rel="nofollow">Link to original</a></p>')[0]
+        srcUrl = srcUrl.split('><a href="')[-1]
+        return srcUrl
+    return None
+
+
+def calculate_ipfs_hash(file_path):
+    """Calculate IPFS hash for a file."""
+
+    def as_chunks(stream: BytesIO, chunk_size: int) -> Iterable[bytes]:
+        while len((chunk := stream.read(chunk_size))) > 0:
+            yield chunk
+
+    with open(file_path, "rb") as f:
+        # Use a larger chunk size for better performance (64KB instead of 4 bytes)
+        result = cid_sha256_hash_chunked(as_chunks(f, 65536))
+        return result
+
+
+def calculate_normal_hash(file_path):
+    hasher = hashlib.sha256()
+    file_size = os.path.getsize(file_path)
+
+    if file_size < 4096:
+        with open(file_path, "rb") as f:
+            hasher.update(f.read())
+    else:
+        offset = (file_size - 4096) // 2
+        with open(file_path, "rb") as f:
+            f.seek(offset)
+            hasher.update(f.read(4096))
+
+    return hasher.hexdigest()
+
+
+def get_directory_snapshot(directory_path):
+    """Get a snapshot of all files in a directory with their modification times."""
+    snapshot = {}
+    try:
+        # Since all files are in root directory, use os.listdir instead of os.walk
+        for filename in os.listdir(directory_path):
+            file_path = os.path.join(directory_path, filename)
+
+            # Skip if not a file
+            if not os.path.isfile(file_path):
+                continue
+
+            try:
+                stat = os.stat(file_path)
+                snapshot[file_path] = {
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime,
+                }
+            except (OSError, FileNotFoundError):
+                # File might have been deleted between listdir and stat
+                continue
+    except FileNotFoundError:
+        logger.warning(f"Directory not found: {directory_path}")
+    return snapshot
+
+
+def log_directory_diff(before_snapshot, after_snapshot, directory_name):
+    """Log the differences between two directory snapshots."""
+    added_files = set(after_snapshot.keys()) - set(before_snapshot.keys())
+    removed_files = set(before_snapshot.keys()) - set(after_snapshot.keys())
+    modified_files = []
+
+    for file_path in set(before_snapshot.keys()) & set(after_snapshot.keys()):
+        if (
+            before_snapshot[file_path]["size"] != after_snapshot[file_path]["size"]
+            or before_snapshot[file_path]["mtime"] != after_snapshot[file_path]["mtime"]
+        ):
+            modified_files.append(file_path)
+
+    if added_files or removed_files or modified_files:
+        logger.info(f"=== {directory_name} Directory Changes ===")
+
+        if added_files:
+            logger.info(f"Added files ({len(added_files)}):")
+            for file_path in sorted(added_files):
+                logger.info(f"  + {file_path}")
+
+        if removed_files:
+            logger.info(f"Removed files ({len(removed_files)}):")
+            for file_path in sorted(removed_files):
+                logger.info(f"  - {file_path}")
+
+        if modified_files:
+            logger.info(f"Modified files ({len(modified_files)}):")
+            for file_path in sorted(modified_files):
+                logger.info(f"  ~ {file_path}")
+
+        logger.info(f"=== End {directory_name} Changes ===")
+    else:
+        logger.info(f"No changes detected in {directory_name}")
+
+
+def removeIllegalChars(pdfTitle):
+    illegalChars = getConfig()["illegalFileNameChars"]
+    for char in illegalChars:
+        pdfTitle = pdfTitle.replace(char, "")
+
+    return pdfTitle
+
+
+def getArxivTitle(arxiv_id):
+    # Make a request to the arXiv API to get the metadata for the paper
+    logger.info(f"Getting arXiv title for: {arxiv_id}")
+    res = requests.get(f"http://export.arxiv.org/api/query?id_list={arxiv_id}")
+
+    # Check if the request was successful
+    if res.status_code != 200:
+        return "Error: Could not retrieve paper information"
+
+    # Extract the title from the response
+    data = res.text.replace("\n", "").replace("\t", "")
+    # print(data)
+    start = data.index("</published>    <title>") + len("</published>    <title>")
+    end = data.index("</title>    <summary>")
+    # print(start, end)
+    title = data[start:end]
+    return title
+
+
+def getDOITitle(doi):
+    # Make a request to the CrossRef API to get the metadata for the paper
+    headers = {"Accept": "application/json"}
+    res = requests.get(f"https://api.crossref.org/v1/works/{doi}", headers=headers)
+
+    # Check if the request was successful
+    if res.status_code != 200:
+        return "Error: Could not retrieve paper information"
+
+    # Extract the title from the response
+    data = res.json()
+    title = data["message"]["title"][0]
+    return title
+
+
+def get_id_type(paper_id):
+    # Check if the given string is a valid arXiv ID
+    if re.match(r"^\d+\.\d+$", paper_id):
+        return "arxiv"
+
+    # Check if the given string is a valid DOI
+    if paper_id.startswith("10."):
+        return "doi"
+
+    # If the string is neither an arXiv ID nor a DOI, return False
+    return False
+
+
+// File: /home/pimania/dev/infolio/src/generateLists.py
+import os
+import re
+import time
+import subprocess
+import tempfile
+import zipfile
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Tuple, Optional, Any, Set
+
+import requests
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from loguru import logger
+
+# Assuming local imports work as before
+from . import utils, db
+from . import manageLists
+
+# --- Configuration & Constants --- (Same as before)
+load_dotenv()
+API_TOKEN = os.getenv("MINERU_API")
+if not API_TOKEN:
+    raise ValueError("MINERU_API token not found in .env")
+
+MINERU_API_BASE = "https://mineru.net/api/v4"
+MINERU_HEADERS = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {API_TOKEN}",
+}
+POLL_RETRIES = 25
+POLL_INTERVAL = 12
+REQ_TIMEOUT_S = 30
+REQ_TIMEOUT_L = 300
+EPUB_SUBDIR = "epubArticles"
+PREFIXED_SUBDIR = "prefixedArticles"
+HTML_EXT = {".html", ".mhtml"}
+PDF_EXT = ".pdf"
+EPUB_EXT = ".epub"
+PANDOC_CMD = [
+    "pandoc",
+    "{input_md}",
+    "-o",
+    "{output_epub}",
+    "--webtex=https://latex.codecogs.com/svg.latex?",
+    "-f",
+    "markdown_github+tex_math_single_backslash+tex_math_dollars",
+    "--embed-resources",
+    "--standalone",
+    "--resource-path",
+    "{resource_path}",
+    "--split-level=1",
+    "--epub-title-page=false",
+]
+MAX_CONVERSION_WORKERS = 6  # Default, can be overridden by config
+
+
+# --- Helper: Mineru API Request --- (Same as before)
+def _mineru_request(
+    method: str, endpoint_or_url: str, is_full_url=False, **kwargs
+) -> requests.Response:
+    """Wrapper for Mineru API requests with error handling."""
+    url = endpoint_or_url if is_full_url else f"{MINERU_API_BASE}{endpoint_or_url}"
+    # Ensure standard Mineru headers are used unless explicitly overridden
+    headers = kwargs.pop("headers", MINERU_HEADERS)
+    try:
+        kwargs.setdefault("timeout", REQ_TIMEOUT_S)
+        response = requests.request(method, url, headers=headers, **kwargs)
+        response.raise_for_status()
+        # Check for Mineru specific API errors in JSON response (if applicable)
+        # Only check if it looks like a JSON response and NOT a file download (e.g. GET zip)
+        # And also not for the PUT upload which doesn't return JSON
+        if method.upper() not in [
+            "PUT",
+            "GET",
+        ] or "application/json" in response.headers.get("Content-Type", ""):
+            # Check more carefully if response likely contains JSON
+            try:
+                result = response.json()
+                if isinstance(result, dict) and result.get("code") not in [
+                    0,
+                    200,
+                    None,
+                ]:
+                    # Handle Mineru API specific error codes if present
+                    raise requests.exceptions.HTTPError(
+                        f"Mineru API Error (code {result.get('code')}): {result.get('message', result)}",
+                        response=response,
+                    )
+            except requests.exceptions.JSONDecodeError:
+                # Ignore if response is not JSON (e.g., could be the raw file from PUT)
+                pass  # Or log a debug message if needed
+
+        return response
+    except requests.exceptions.RequestException as e:
+        err_msg = f"Mineru API request failed ({method} {url}): {e}"
+        if e.response is not None:
+            err_msg += (
+                f" - Status: {e.response.status_code}, Body: {e.response.text[:200]}"
+            )
+        logger.error(err_msg)
+        raise
+
+
+# --- PDF to EPUB Conversion Sub-Functions --- (Same as before)
+def _mineru_get_upload_info(pdf_path: Path) -> Tuple[str, str]:
+    """Gets batch ID and upload URL from Mineru."""
+    filename = pdf_path.name
+    payload = {
+        "files": [{"name": filename, "is_ocr": False, "data_id": filename}],
+        "enable_formula": True,
+        "enable_table": True,
+        "language": "en",
+    }
+    logger.debug(f"Requesting upload info for {filename}")
+    resp = _mineru_request(
+        "POST", "/file-urls/batch", json=payload, timeout=REQ_TIMEOUT_S
+    )
+    data = resp.json().get("data", {})
+    batch_id = data.get("batch_id")
+    upload_url = data.get("file_urls", [None])[0]
+    if not batch_id or not upload_url:
+        raise ValueError(
+            f"Missing batch_id or upload_url in Mineru response for {filename}"
+        )
+    logger.debug(f"Obtained batch_id: {batch_id} for {filename}")
+    return batch_id, upload_url
+
+
+def _mineru_upload_file(upload_url: str, pdf_path: Path):
+    """Uploads the PDF file to the given Mineru pre-signed URL."""
+    logger.debug(f"Uploading {pdf_path.name} to Mineru pre-signed URL...")
+    try:
+        with pdf_path.open("rb") as f:
+            # Use requests.put directly WITHOUT the standard Mineru headers.
+            # Pre-signed S3/OSS URLs require specific (or lack of) headers.
+            # The documentation explicitly says not to set Content-Type.
+            # Requests library will typically set an appropriate Content-Type like
+            # 'application/octet-stream' or the server might not require it at all.
+            # CRUCIALLY, we omit the 'Authorization' header provided by MINERU_HEADERS.
+            response = requests.put(
+                upload_url,
+                data=f,
+                # NO 'headers' argument here! This avoids sending MINERU_HEADERS.
+                timeout=REQ_TIMEOUT_L,
+            )
+            response.raise_for_status()  # Check for HTTP errors (like the 403)
+        logger.debug(f"Successfully uploaded {pdf_path.name} via pre-signed URL")
+    except requests.exceptions.RequestException as e:
+        # Provide specific error context for upload failures
+        err_msg = f"Mineru file upload failed (PUT {upload_url}): {e}"
+        if e.response is not None:
+            # Log the specific error from the upload server (OSS/S3)
+            err_msg += f" - Status: {e.response.status_code}, Body: {e.response.text[:500]}"  # Log more body for upload errors
+        logger.error(err_msg)
+        raise  # Re-raise the exception to be caught by the main conversion orchestrator
+
+
+def _mineru_poll_for_zip_url(batch_id: str, filename: str) -> str:
+    """Polls Mineru until the processing is done and returns the zip URL."""
+    result_url = f"/extract-results/batch/{batch_id}"
+    logger.debug(f"Polling Mineru task status for batch {batch_id} ({filename})")
+    for attempt in range(POLL_RETRIES):
+        try:
+            res = _mineru_request("GET", result_url, timeout=REQ_TIMEOUT_S)
+            result_data = res.json().get("data", {})
+            extract_result = result_data.get("extract_result", [{}])[0]
+            state = extract_result.get("state")
+            logger.debug(
+                f"Polling batch {batch_id} (attempt {attempt+1}/{POLL_RETRIES}): state={state}"
+            )
+            if state == "done":
+                full_zip_url = extract_result.get("full_zip_url")
+                if not full_zip_url:
+                    raise ValueError(
+                        f"Missing full_zip_url in 'done' state for batch {batch_id}"
+                    )
+                logger.info(
+                    f"Mineru processing finished for batch ({filename}) {full_zip_url}"
+                )
+                return full_zip_url
+            elif state == "failed":
+                err_msg = extract_result.get("err_msg", "Unknown failure")
+                raise RuntimeError(
+                    f"Mineru processing failed for batch {batch_id}: {err_msg}"
+                )
+            time.sleep(POLL_INTERVAL)
+        except requests.exceptions.HTTPError as e:
+            if not (500 <= e.response.status_code < 600):
+                raise
+            logger.warning(
+                f"Server error during polling ({e.response.status_code}), retrying..."
+            )
+            time.sleep(POLL_INTERVAL)
+    raise TimeoutError(
+        f"Polling timed out for batch {batch_id} ({filename}) after {POLL_RETRIES} attempts."
+    )
+
+
+def _run_pandoc_conversion(extracted_dir: Path, epub_path: Path):
+    """Finds the markdown, demotes headers, and runs Pandoc."""
+    md_path = extracted_dir / "full.md"
+    if not md_path.is_file():
+        raise FileNotFoundError(f"full.md not found in {extracted_dir}")
+    logger.debug(f"Preparing Pandoc conversion for {epub_path.name}")
+    md_content = re.sub(
+        r"^# (?!#)", "## ", md_path.read_text(encoding="utf-8"), flags=re.MULTILINE
+    )
+    tmp_md_path = extracted_dir.parent / "temp_full.md"
+    tmp_md_path.write_text(md_content, encoding="utf-8")
+    try:
+        pandoc_cmd_formatted = [
+            item.format(
+                input_md=str(tmp_md_path),
+                output_epub=str(epub_path),
+                resource_path=str(extracted_dir),
+            )
+            for item in PANDOC_CMD
+        ]
+        logger.debug(f"Running Pandoc: {' '.join(pandoc_cmd_formatted)}")
+        result = subprocess.run(
+            pandoc_cmd_formatted, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            err_log = f"Pandoc failed for {epub_path.name} (code {result.returncode}). Stderr: {result.stderr.strip()}"
+            logger.error(err_log)
+            raise ChildProcessError(err_log)
+        if result.stderr:
+            logger.debug(
+                f"Pandoc stderr (warnings) for {epub_path.name}: {result.stderr.strip()}"
+            )
+        logger.debug(f"Pandoc conversion successful for {epub_path.name}")
+    finally:
+        tmp_md_path.unlink(missing_ok=True)
+
+
+def _download_extract_and_convert(zip_url: str, epub_path: Path, pdf_stem: str) -> bool:
+    """Downloads zip, extracts, and triggers Pandoc conversion within a temp directory."""
+    with tempfile.TemporaryDirectory(prefix=f"mineru_{pdf_stem}_") as tmpdir:
+        tmp_path = Path(tmpdir)
+        zip_path = tmp_path / "result.zip"
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        logger.debug(f"Downloading result zip from {zip_url}")
+        with _mineru_request(
+            "GET", zip_url, is_full_url=True, stream=True, timeout=REQ_TIMEOUT_L
+        ) as r:
+            with zip_path.open("wb") as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
+        logger.debug(f"Extracting zip {zip_path.name} to {extract_dir}")
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(extract_dir)
+        except zipfile.BadZipFile as e:
+            logger.error(f"Invalid zip file downloaded from {zip_url}: {e}")
+            return False
+        _run_pandoc_conversion(extract_dir, epub_path)  # Raises on pandoc failure
+    return True
+
+
+# --- PDF to EPUB Conversion Orchestrator --- (Same as before)
+def _run_pdf_to_epub_conversion(pdf_path: Path, epub_path: Path) -> bool:
+    """Orchestrates the PDF -> Mineru -> EPUB conversion using helper functions."""
+    logger.info(f"Starting conversion: {pdf_path.name} -> {epub_path.name}")
+    try:
+        batch_id, upload_url = _mineru_get_upload_info(pdf_path)
+        _mineru_upload_file(upload_url, pdf_path)
+        full_zip_url = _mineru_poll_for_zip_url(batch_id, pdf_path.name)
+        success = _download_extract_and_convert(full_zip_url, epub_path, pdf_path.stem)
+        if success:
+            logger.info(f"Successfully converted {pdf_path.name} -> {epub_path.name}")
+            return True
+        else:
+            logger.error(
+                f"Conversion process failed for {pdf_path.name} after polling."
+            )
+            return False
+    except Exception as e:
+        logger.exception(f"Conversion failed for {pdf_path.name}")
+        return False
+
+
+# --- HTML Prefixing Logic --- (Same as before)
+def _run_html_prefixing(html_path: Path, prefixed_path: Path, summary: str) -> bool:
+    """Adds summary prefix to an HTML/MHTML file."""
+    if not summary:
+        return False
+    try:
+        content = html_path.read_text(encoding="utf-8", errors="ignore")
+        summary_html = f"<p>{summary}</p><hr/>"
+        try:
+            soup = BeautifulSoup(content, "html5lib")
+        except:
+            soup = BeautifulSoup(content, "html.parser")
+        body = soup.find("body")
+        prefix_soup = BeautifulSoup(summary_html, "html.parser")
+        if body:
+            body.insert(0, prefix_soup)
+        else:
+            soup.insert(0, prefix_soup)
+        prefixed_path.write_text(str(soup), encoding="utf-8")
+        logger.info(f"Successfully prefixed {html_path.name} -> {prefixed_path.name}")
+        return True
+    except Exception as e:
+        logger.exception(f"Failed prefixing {html_path.name}")
+        return False
+
+
+# --- Main List Processing Functions ---
+
+
+# Correction: appendToLists now adds FULL PATHS (as strings) to the list
+def appendToLists():
+    """Searches DB and adds FULL article paths (strings) to lists based on config."""
+    config = utils.getConfig()
+    listToTagMappings = config.get("listToTagMappings", {})
+    article_dir = Path(config.get("articleFileFolder", "."))
+    if not article_dir.is_dir():
+        logger.error(f"Article directory not found: {article_dir}")
+        return  # Cannot proceed without article directory
+
+    for listName, listInfo in listToTagMappings.items():
+        if listInfo.get("disabled", False):
+            manageLists.deleteListIfExists(listName)
+            continue
+
+        logger.debug(f"Checking articles for list '{listName}'")
+        try:
+            # Assuming searchArticlesByTags returns a map of FILENAME -> sort_key
+            article_files_map = db.searchArticlesByTags(
+                all_tags=listInfo.get("all_tags", []),
+                any_tags=listInfo.get("any_tags", []),
+                not_any_tags=listInfo.get("not_any_tags", []),
+                readState=listInfo.get("readState", "unread"),
+                formats=listInfo.get("formats", config.get("docFormatsToMove", [])),
+            )
+            # Convert filenames to full paths and sort
+            sorted_full_paths = [
+                str(article_dir / item[0])  # Create full path string
+                for item in sorted(article_files_map.items(), key=lambda x: x[1])
+                if (
+                    article_dir / item[0]
+                ).is_file()  # Ensure the source file actually exists
+            ]
+
+            # Log if any files returned by DB search don't exist on disk
+            if len(sorted_full_paths) != len(article_files_map):
+                logger.warning(
+                    f"List '{listName}': Found {len(article_files_map) - len(sorted_full_paths)} missing files during DB scan."
+                )
+            # convert pdf paths to epub paths
+            convertedPaths = []
+            article_dir = Path(config.get("articleFileFolder", "."))
+            epub_dir = os.path.join(article_dir, EPUB_SUBDIR)
+            for path in sorted_full_paths:
+                base_name = os.path.basename(str(path))
+                extension = os.path.splitext(base_name)[1]
+                if extension == ".pdf":
+                    fileName_stem = os.path.splitext(base_name)[0]
+                    fileName = fileName_stem + ".epub"
+                    filePath = os.path.join(epub_dir, fileName)
+                    convertedPaths.append(filePath)
+                else:
+                    convertedPaths.append(path)
+
+            # Add the list of full path strings
+            manageLists.addArticlesToList(listName, convertedPaths)
+            logger.info(
+                f"List '{listName}': Populated with {len(convertedPaths)} article paths"  # {convertedPaths}"
+            )
+
+        except Exception:
+            logger.exception(
+                f"Failed processing criteria or updating list '{listName}'",
+            )
+
+
+# --- `modifyListFiles` Helper Functions ---
+
+
+# Correction: Takes List[Path] objects now
+def _schedule_tasks_and_update_existing(
+    current_paths: List[Path],  # List of Path objects
+    epub_dir: Path,
+    prefixed_dir: Path,
+    prefixSummary: bool,
+    listName: str,
+    executor: ThreadPoolExecutor,
+    article_dir: Path,
+) -> Tuple[List[Optional[Path]], Dict[Any, Tuple[int, Path, Path]]]:
+    """
+    Iterates current paths, handles existing targets, schedules PDF conversions.
+    Returns the initial final_paths list (as Paths) and the pdf_futures dictionary.
+    """
+    final_paths: List[Optional[Path]] = list(
+        current_paths
+    )  # Start with current Path objects
+    pdf_futures = {}  # future -> (original_index, source_path, target_path)
+
+    for i, source_path in enumerate(current_paths):  # Now iterating over Path objects
+        # No need to check is_file() here, assuming appendToLists filtered correctly
+        # If not, add: if not source_path.is_file(): final_paths[i] = None; continue
+
+        file_ext = source_path.suffix.lower()
+
+        # Handle PDF: Check existing EPUB or schedule conversion
+        if file_ext == EPUB_EXT and epub_dir == source_path.parent:
+            fileName = source_path.name
+            target_epub_path = epub_dir / fileName
+            src_pdf_path = article_dir / fileName.replace(EPUB_EXT, PDF_EXT)
+            if target_epub_path.exists():
+                logger.debug(
+                    f"Using existing EPUB for {source_path.name}: {target_epub_path.name}"
+                )
+                final_paths[i] = target_epub_path  # Update with Path object
+            else:
+                logger.debug(f"Scheduling PDF->EPUB conversion for {source_path.name}")
+                future = executor.submit(
+                    _run_pdf_to_epub_conversion, src_pdf_path, target_epub_path
+                )
+                pdf_futures[future] = (i, source_path, target_epub_path)
+                # Keep original Path in final_paths until future completes
+
+        # Handle HTML: Check existing prefixed file
+        elif file_ext in HTML_EXT and prefixSummary:
+            # Construct potential target path using the *original filename*
+            target_prefixed_path = prefixed_dir / source_path.name
+            if target_prefixed_path.exists():
+                logger.debug(
+                    f"Using existing prefixed HTML for {source_path.name}: {target_prefixed_path.name}"
+                )
+                final_paths[i] = target_prefixed_path  # Update with Path object
+            # Actual prefixing happens later if needed
+
+    return final_paths, pdf_futures
+
+
+# Correction: Accepts and updates list of Optional[Path]
+def _process_pdf_futures(pdf_futures: dict, final_paths: List[Optional[Path]]):
+    """Waits for PDF conversion futures and updates final_paths (list of Path) based on results."""
+    if not pdf_futures:
+        return
+
+    logger.info(f"Waiting for {len(pdf_futures)} PDF conversion tasks...")
+    for future in as_completed(pdf_futures):
+        original_index, source_path, target_path = pdf_futures[future]
+        try:
+            success = future.result()  # Result is True/False
+            if success:
+                final_paths[original_index] = (
+                    target_path  # Update path (Path object) on success
+                )
+            else:
+                logger.warning(
+                    f"Conversion failed for {source_path.name}, keeping original path in list."
+                )
+                # Original Path object remains in final_paths[original_index]
+        except Exception as exc:
+            logger.exception(
+                f"PDF conversion future raised an unexpected exception for {source_path.name}",
+            )
+            # Keep original Path object on unexpected error
+
+
+# Correction: Accepts List[Optional[Path]] and List[Path]
+def _process_html_prefixing(
+    final_paths: List[Optional[Path]],  # Current state (Paths or None)
+    original_paths: List[Path],  # Original paths (Paths)
+    prefixSummary: bool,
+    prefixed_dir: Path,
+):
+    """Performs sequential HTML prefixing for paths that need it."""
+    if not prefixSummary:
+        return
+
+    logger.info("Processing HTML prefixing...")
+    for i, current_final_path in enumerate(final_paths):
+        if current_final_path is None:
+            continue  # Skip removed items
+
+        original_source_path = original_paths[i]  # Get the original Path for this index
+
+        # Check if the *original* path was HTML and if the *current* path in final_paths
+        # is still that original path (meaning it wasn't updated to an EPUB or existing prefixed file yet).
+        if (
+            original_source_path.suffix.lower() in HTML_EXT
+            and current_final_path == original_source_path
+        ):
+            # Use the original filename to create the target prefixed path name
+            target_prefixed_path = prefixed_dir / original_source_path.name
+            # Check DB for summary using original filename
+            article_data = db.get_article_by_file_name(original_source_path.name)
+            summary = article_data.get("summary") if article_data else None
+            if summary:
+                logger.debug(f"Attempting to prefix {original_source_path.name}")
+                # Run prefixing using the current_final_path (which equals original_source_path here)
+                success = _run_html_prefixing(
+                    current_final_path, target_prefixed_path, summary
+                )
+                if success:
+                    final_paths[i] = (
+                        target_prefixed_path  # Update path (Path object) on success
+                    )
+                else:
+                    logger.warning(
+                        f"Prefixing failed for {original_source_path.name}, keeping original path."
+                    )
+            else:
+                logger.debug(
+                    f"No summary found for {original_source_path.name}, skipping prefixing."
+                )
+
+
+# --- Main `modifyListFiles` Orchestrator ---
+
+
+def modifyListFiles():
+    """Processes files (referenced by full paths) in lists: PDF->EPUB conversion, HTML prefixing."""
+    config = utils.getConfig()
+    listToTagMappings = config.get("listToTagMappings", {})
+    article_dir = Path(config.get("articleFileFolder", "."))
+    epub_dir = article_dir / EPUB_SUBDIR
+    prefixed_dir = article_dir / PREFIXED_SUBDIR
+    epub_dir.mkdir(parents=True, exist_ok=True)
+    prefixed_dir.mkdir(parents=True, exist_ok=True)
+    max_workers = config.get("maxConversionWorkers", MAX_CONVERSION_WORKERS)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for listName, listInfo in listToTagMappings.items():
+            if listInfo.get("disabled", False):
+                continue
+
+            prefixSummary = listInfo.get("prefixSummary", False)
+            try:
+                # Get list of FULL PATHS (strings) from the utility function now
+                current_paths_str = manageLists.getArticlesFromList(listName)
+                if not current_paths_str:
+                    logger.debug(f"List '{listName}' is empty, skipping modification.")
+                    continue
+
+                # Convert string paths to Path objects for internal processing
+                current_paths: List[Path] = []
+                valid_current_paths_str: List[str] = (
+                    []
+                )  # Keep track of original strings for comparison later
+                for p_str in current_paths_str:
+                    p_str = os.path.join(str(article_dir), p_str)
+                    p = Path(p_str)
+                    current_paths.append(p)
+                    valid_current_paths_str.append(p_str)
+
+                if not current_paths:
+                    logger.debug(
+                        f"List '{listName}' contains no existing files after validation, skipping modification."
+                    )
+                    # Optionally, clear the list here if it contained only invalid paths
+                    # manageLists.addArticlesToList(listName, [], overwrite=True)
+                    continue
+
+                logger.info(
+                    f"Processing modifications for list '{listName}' ({len(current_paths)} valid items)"
+                )
+
+                # Stage 1: Schedule parallel PDF tasks & handle existing targets (uses Path objects)
+                final_paths, pdf_futures = _schedule_tasks_and_update_existing(
+                    current_paths,
+                    epub_dir,
+                    prefixed_dir,
+                    prefixSummary,
+                    listName,
+                    executor,
+                    article_dir,
+                )  # Receives/Returns List[Optional[Path]]
+
+                # Stage 2: Wait for parallel PDF tasks (updates final_paths with Path objects)
+                _process_pdf_futures(pdf_futures, final_paths)
+
+                # Stage 3: Perform sequential HTML prefixing (uses/updates final_paths with Path objects)
+                _process_html_prefixing(
+                    final_paths, current_paths, prefixSummary, prefixed_dir
+                )
+
+                # Stage 4: Update the list in the utility
+                # Convert final Path objects back to strings, filtering Nones
+                updated_paths_str = [str(p) for p in final_paths if p is not None]
+
+                # # Compare sets of strings to see if changes occurred
+                # original_paths_set = set(
+                #     valid_current_paths_str
+                # )  # Use only the valid original paths for comparison
+                # updated_paths_set = set(updated_paths_str)
+
+                # if updated_paths_set != original_paths_set:
+                #     logger.info(
+                #         f"Updating list '{listName}' with {len(updated_paths_str)} processed paths."
+                #     )
+                #     logger.info(f"Updated paths: {updated_paths_str}")
+                #     manageLists.addArticlesToList(listName, updated_paths_str, overwrite=True)
+                # else:
+                #     logger.info(
+                #         f"No effective changes required for list '{listName}' after processing."
+                #     )
+
+            except Exception:
+                logger.exception(
+                    f"Failed processing modifications for list '{listName}'",
+                )
+
+
+# --- Main Execution Guard --- (Same as before)
+if __name__ == "__main__":
+    appendToLists()
+    modifyListFiles()
+
+
+// File: /home/pimania/dev/infolio/src/downloadNewArticles.py
+import os
+import webbrowser
+import ssl
+import time
+import json
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+import requests
+from urllib.parse import urlparse
+import markdown
+from loguru import logger
+from . import utils
+import sys
+import pysnooper
+
+requests.packages.urllib3.disable_warnings()
+
+sys.path.append(utils.getConfig()["convertLinksDir"])
+from convertLinks import main as convertLinks
+
+
+def calcUrlsToAdd(onlyRead=False):
+    bookmarksFilePath = utils.getConfig()["bookmarksFilePath"]
+    with open(bookmarksFilePath) as f:
+        bookmarks = json.load(f)
+
+    urlsToAdd = {}
+
+    if onlyRead:
+        markedAsReadUrls = utils.getUrlsFromFile(
+            utils.getAbsPath("../storage/markedAsReadArticles.txt")
+        )
+
+    allAddedUrls = utils.getUrlsFromFile(
+        utils.getAbsPath("../storage/alreadyAddedArticles.txt")
+    )
+    bmBar = bookmarks["roots"]["bookmark_bar"]["children"]
+    for folder in bmBar:
+        if folder["type"] == "folder" and folder["name"] == "@Voice":
+            for folder in folder["children"]:
+                subject = folder["name"]
+                if onlyRead and subject.lower() == "unread":
+                    continue
+                urlsToAdd[subject] = []
+                for link in folder["children"]:
+                    url = link["url"]
+                    url = utils.formatUrl(url)
+                    if onlyRead:
+                        if (
+                            url.lower() not in "\n".join(markedAsReadUrls).lower()
+                            and url.lower() in "\n".join(allAddedUrls).lower()
+                        ):
+                            url = convertLinks(url, False, True)
+                            if url and url[0]:
+                                url = url[0]
+                                if (
+                                    url.lower()
+                                    not in "\n".join(markedAsReadUrls).lower()
+                                    and url.lower() in "\n".join(allAddedUrls).lower()
+                                ):
+                                    urlsToAdd[subject].append(url)
+                                    logger.info(f"added url: {url}")
+                    else:
+                        if url.lower() not in "\n".join(allAddedUrls).lower():
+                            url = convertLinks(url, False, True)
+                            if url and url[0]:
+                                url = url[0]
+                                if url.lower() not in "\n".join(allAddedUrls).lower():
+                                    urlsToAdd[subject].append(url)
+                                    logger.info(f"added url: {url}")
+
+    return urlsToAdd
+
+
+def save_text_as_html(url):
+    response = requests.get(url, verify=ssl.CERT_NONE, timeout=10)
+    text_content = response.text
+
+    # Convert text to HTML using markdown
+    html_content = markdown.markdown(text_content)
+
+    parsed_url = urlparse(url)
+    title = os.path.basename(parsed_url.path)
+    title = "".join(c for c in title if c.isalnum() or c.isspace()).rstrip()
+
+    return html_content, title
+
+
+def downloadNewArticles(urlsToAdd):
+    saveDirectory = utils.getConfig()["pdfSourceFolders"][0]
+    logger.info(f"URLs to add: {urlsToAdd}")
+    for url in urlsToAdd:
+        urlCopy = str(url)
+        if url.endswith(".pdf"):
+            continue
+        logger.info(f"trying to download: {url}")
+        try:
+            save_mobile_article_as_mhtml(url, saveDirectory)
+        except Exception as e:
+            logger.error(f"Error downloading article: {url} {e}")
+        else:
+            utils.addUrlsToUrlFile(
+                [utils.formatUrl(urlCopy)],
+                utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
+            )
+
+    # Add downloaded URLs to alreadyAddedArticles.txt
+
+
+def save_webpage_as_mhtml(url, timeout=10, min_load_time=5):
+    try:
+        resp = requests.get(url, verify=False, timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Failed to fetch {url}: {e}")
+    if resp.status_code != 200:
+        raise Exception(f"Failed to download {url}, status code {resp.status_code}")
+
+    chrome_options = Options()
+    user_agent = "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
+    chrome_options.add_argument(f"user-agent={user_agent}")
+    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_argument("--headless")
+    driver = webdriver.Chrome(options=chrome_options)
+
+    try:
+        start_time = time.time()
+        driver.get(url)
+        wait = WebDriverWait(driver, timeout)
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        body_load_time = time.time() - start_time
+        remaining_time = max(0, min_load_time - body_load_time)
+        time.sleep(remaining_time)
+
+        title = driver.title
+        title = "".join(c for c in title if c.isalnum() or c.isspace()).rstrip()
+
+        mhtml_data = driver.execute_cdp_cmd(
+            "Page.captureSnapshot", {"format": "mhtml"}
+        )["data"]
+
+    finally:
+        driver.quit()
+
+    return mhtml_data, title
+
+
+def save_mobile_article_as_mhtml(url, saveDirectory, timeout=10, min_load_time=5):
+    originalUrl = url
+    try:
+        response = requests.get(url, verify=False, timeout=timeout)
+    except requests.exceptions.SSLError:
+        url = url.replace("https", "http")
+        response = requests.get(url, verify=False, timeout=timeout)
+    if response.status_code != 200:
+
+        webbrowser.open(url)
+        raise Exception(f"Failed to download {url}, status code {response.status_code}")
+
+    content_type = response.headers.get("Content-Type")
+    content_disposition = response.headers.get("Content-Disposition")
+    downloadAsHtml = content_type == "text/plain" or (
+        content_disposition and "attachment" in content_disposition
+    )
+    if downloadAsHtml:
+        fileExt = ".html"
+        logger.info(f"saving url: {url} as text")
+        htmlText, title = save_text_as_html(url)
+    else:
+        fileExt = ".mhtml"
+        logger.info(f"saving url: {url} as webpage")
+        htmlText, title = save_webpage_as_mhtml(url, timeout, min_load_time)
+
+    file_path = os.path.join(saveDirectory, f"{title}{fileExt}")
+    if os.path.exists(file_path):
+        currentTime = int(time.time())
+        file_path = file_path.replace(fileExt, f"_{currentTime}{fileExt}")
+
+    if downloadAsHtml:
+        htmlText = f"<!-- Hyperionics-OriginHtml {originalUrl}-->\n{htmlText}"
+        with open(file_path, "w") as file:
+            file.write(htmlText)
+    else:
+        with open(file_path, "wb") as file:
+            file.write(htmlText.encode("utf-8"))
+
+
+if __name__ == "__main__":
+    articles = """https://embeddedsw.net/doc/physical_coercion.txt
+    https://github.com"""
+    downloadNewArticles(articles.split("\n"))
+
+
+// File: /home/pimania/dev/infolio/src/articleSummary.py
+import random
+import re
+import traceback
+import sys
+import os
+from pathlib import Path
+from typing import Optional, Tuple
+import concurrent.futures
+from loguru import logger
+from dotenv import load_dotenv
+from openai import OpenAI
+
+# Handle imports for both package and direct script execution
+if __name__ == "__main__":
+    # When run directly, add parent directory to path
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import src.utils as utils
+    import src.textExtraction as textExtraction
+    import src.db as db
+else:
+    # When imported as a module
+    from . import utils
+    from . import textExtraction
+    from . import db
+
+# Configure loguru logger
+log_file_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "logs",
+    "summary.log",
+)
+os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+
+# Load environment variables from one of multiple potential .env locations
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+potential_env_paths = [
+    os.path.join(project_root, ".env"),
+    os.path.join(os.getcwd(), ".env"),
+    os.path.abspath(".env"),
+]
+
+for env_path in potential_env_paths:
+    if os.path.exists(env_path):
+        load_dotenv(dotenv_path=env_path)
+        logger.debug(f"Loaded environment from: {env_path}")
+        break
+
+
+def summarize_with_openrouter(text: str) -> Tuple[str, bool]:
+    """Generate a summary of the text using the OpenRouter API.
+
+    Args:
+        text: Text to summarize
+
+    Returns:
+        Tuple[str, bool]: Generated summary and flag indicating if the text was sufficient.
+    """
+    if not text or not text.strip():
+        logger.warning("No text to summarize")
+        return "No text to summarize", False
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        logger.error("OPENROUTER_API_KEY not found in environment variables")
+        raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+
+    config = utils.getConfig()
+    model = config.get("ai_model")
+
+    try:
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+        )
+        logger.debug(f"Sending summary request to OpenRouter with model: {model}")
+
+        system_prompt = (
+            "You are a helpful system that generates concise summaries of academic or educational content. "
+            "You must first assess if the provided text contains sufficient content to generate a meaningful summary. "
+            "If the text is too short, fragmented, or lacks substantive content, respond with "
+            '"<summary>[INSUFFICIENT_TEXT]</summary>" at the beginning of your response. '
+            "DO NOT respond with [INSUFFICIENT_TEXT] if there is substantive content but the text merely ends abruptly/not at the end of a sentence. "
+            "ALWAYS return your summary enclosed within <summary></summary> tags. "
+            "ONLY put the summary itself inside these tags, not any other part of your response."
+        )
+
+        user_prompt = (
+            f"Please analyze the following text:\n\n{text}\n\n"
+            "First, determine if the text provides enough substantial content to write a meaningful summary. "
+            "If the text is too short, fragmented, or clearly not the full article (e.g., just metadata, table of contents, or a small snippet), "
+            'respond with "<summary>[INSUFFICIENT_TEXT]</summary>" followed by a brief explanation of why the text is insufficient.\n\n'
+            "If the text IS sufficient, please summarize it in a concise but informative way that captures the main arguments, principles, "
+            'concepts, cruxes, intuitions, explanations and conclusions. Do not say things like "the author argues that..." or '
+            '"the text explains how...".\n\n'
+            "IMPORTANT: Return ONLY your summary enclosed within <summary></summary> tags. Do not include any other text outside these tags."
+        )
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        full_response = response.choices[0].message.content
+
+        summary_match = re.search(r"<summary>(.*?)</summary>", full_response, re.DOTALL)
+        if summary_match:
+            summary = summary_match.group(1).strip()
+        else:
+            error_message = "Summary tags not found in model response"
+            logger.error(f"{error_message}. Response: {full_response}")
+            return f"Failed to generate summary: {error_message}", False
+
+        if summary.startswith("[INSUFFICIENT_TEXT]"):
+            logger.debug(f"Insufficient text detected: {summary}")
+            return summary, False
+
+        return summary, True
+
+    except Exception as e:
+        error_message = f"Error generating summary: {str(e)}"
+        logger.error(f"{error_message}\n{traceback.format_exc()}")
+        traceback.print_exc()
+        return f"Failed to generate summary: {error_message}", False
+
+
+def get_article_summary(file_path: str) -> Tuple[str, bool]:
+    """Get or create a summary for an article.
+
+    Args:
+        file_path: Path to the article file
+
+    Returns:
+        Tuple[str, bool]: Article summary and a flag indicating if text was sufficient.
+    """
+    file_hash = utils.calculate_normal_hash(file_path)
+    file_name = os.path.basename(file_path)
+    file_format = os.path.splitext(file_path)[1].lower().lstrip(".")
+
+    # Only check existing summary if not forcing a new one
+    article = db.get_article_by_hash(file_hash)
+    if article and article["summary"] is not None and article["summary"] != "":
+        summary = article["summary"]
+        if summary == "failed_to_summarise":
+            logger.debug(f"Skipping file {file_name} due to previous insufficient text")
+            return summary, False
+        elif summary == "failed_to_extract":
+            logger.debug(f"Skipping file {file_name} due to previous extraction issues")
+            return summary, False
+        else:
+            # Article has a valid summary, return it
+            logger.debug(f"Using existing summary for {file_name}")
+            # db.update_article_summary(
+            #     file_hash,
+            #     file_name,
+            #     file_format,
+            #     summary,
+            #     article["extraction_method"],
+            #     article["word_count"],
+            # )
+            return summary, True
+
+    # If we get here, the article needs a summary (either no entry, empty summary, or forcing new)
+    logger.debug(f"Generating new summary for: {file_name}")
+
+    try:
+        config = utils.getConfig()
+        max_words = int(config.get("summary_in_max_words", 3000))
+        text, extraction_method, word_count = textExtraction.extract_text_from_file(
+            file_path, max_words
+        )
+        summary, is_sufficient = summarize_with_openrouter(text)
+        logger.debug(
+            f"Summary generated for {file_name}: is_sufficient={is_sufficient}, length={len(summary)} chars"
+        )
+
+        if not is_sufficient and "[INSUFFICIENT_TEXT]" in summary:
+            db_summary = "failed_to_summarise"
+            logger.warning(
+                f"Insufficient text for file: {file_path}, marking as failed_to_summarise: {summary}"
+            )
+        else:
+            db_summary = summary
+            logger.debug(f"Successfully created summary for file: {file_path}")
+
+        # Update the database with the new summary
+        logger.debug(f"Updating database with summary for {file_name}")
+        db.update_article_summary(
+            file_hash, file_name, file_format, db_summary, extraction_method, word_count
+        )
+        return summary, is_sufficient
+
+    except textExtraction.TextExtractionError as te:
+        if not getattr(te, "already_logged", False):
+            logger.error(f"Error extracting text from article: {str(te)}")
+        db.update_article_summary(
+            file_hash,
+            file_name,
+            file_format,
+            "failed_to_extract",
+            "no method worked",
+            0,
+        )
+        return "failed_to_extract", False
+
+    except Exception as e:
+        error_message = f"Error summarizing article: {str(e)}"
+        logger.error(error_message)
+        if os.environ.get("DEBUG", "false").lower() == "true":
+            logger.debug(traceback.format_exc())
+        return f"Temporary error: {error_message}", False
+
+
+def summarize_articles(articles_path: Optional[str] = None, query: str = "*") -> None:
+    """Summarize all articles in the given path that don't have summaries yet.
+
+    Uses parallel processing to summarize multiple articles simultaneously.
+
+    Args:
+        articles_path: Path to the articles directory.
+        query: Query string to filter articles (default: "*" for all articles).
+    """
+    logger.info("====== Starting article summarization process ======")
+
+    if not articles_path:
+        config = utils.getConfig()
+        articles_path = config.get("articleFileFolder", "")
+        if not articles_path:
+            logger.error("No articles directory specified in config or argument")
+            return
+
+    if not os.path.isabs(articles_path):
+        articles_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), articles_path
+        )
+
+    db.setup_database()
+    articles_needing_summary = db.get_articles_needing_summary()
+    logger.info(f"Found {len(articles_needing_summary)} articles needing summarization")
+
+    if not articles_needing_summary:
+        logger.info("No articles need summarization")
+        return
+
+    articles_to_summarize = []
+    config = utils.getConfig()
+    max_summaries_per_session = int(config.get("maxSummariesPerSession", 150))
+    random.shuffle(articles_needing_summary)
+
+    for file_hash, file_name in articles_needing_summary:
+        if len(articles_to_summarize) >= max_summaries_per_session:
+            logger.info(
+                f"Reached limit of {max_summaries_per_session} articles, stopping"
+            )
+            break
+        file_path = os.path.join(articles_path, file_name)
+        if os.path.exists(file_path):
+            articles_to_summarize.append(file_path)
+            logger.debug(f"Added {file_path} to summarization queue")
+        else:
+            logger.warning(f"Could not find path for {file_name} in {articles_path}")
+
+    logger.info(f"{len(articles_to_summarize)} articles need summarization")
+    if not articles_to_summarize:
+        logger.info("No articles to summarize")
+        return
+
+    max_workers = int(config.get("llm_api_batch_size", 4))
+    total_articles = len(articles_to_summarize)
+    successful = 0
+    failed = 0
+    insufficient = 0
+    summary_word_counts = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_article = {
+            executor.submit(process_single_article, path): path
+            for path in articles_to_summarize
+        }
+        for future in concurrent.futures.as_completed(future_to_article):
+            article_path = future_to_article[future]
+            try:
+                success, message, is_sufficient, summary = future.result()
+                if success:
+                    if is_sufficient:
+                        logger.debug(
+                            f"Successfully summarized: {article_path} - {message}"
+                        )
+                        successful += 1
+                        word_count = len(summary.split())
+                        if word_count:
+                            summary_word_counts.append(word_count)
+                    else:
+                        insufficient += 1
+                else:
+                    logger.warning(f"Failed to summarize: {article_path} - {message}")
+                    failed += 1
+            except Exception as e:
+                logger.error(
+                    f"Failed to summarize: {article_path} - {str(e)}\n{traceback.format_exc()}"
+                )
+                failed += 1
+
+    if summary_word_counts:
+        avg_word_count = sum(summary_word_counts) / len(summary_word_counts)
+        logger.info(
+            f"Average word count in generated summaries: {avg_word_count:.2f} words"
+        )
+
+    logger.info(
+        f"Summary: Processed {total_articles} articles - {successful} successful, {insufficient} insufficient text, {failed} failed"
+    )
+    logger.info("====== Finished article summarization process ======")
+
+
+def process_single_article(article_path: str) -> Tuple[bool, str, bool, str]:
+    """Process a single article for summarization.
+
+    Args:
+        article_path: Path to the article file.
+
+    Returns:
+        Tuple[bool, str, bool, str]: Success status, message, sufficiency flag, and summary.
+    """
+    try:
+        summary, is_sufficient = get_article_summary(article_path)
+        if summary.startswith("Failed to summarize article:"):
+            return False, summary, False, ""
+        if not is_sufficient:
+            return (
+                True,
+                f"Insufficient text detected ({len(summary)} chars)",
+                False,
+                summary,
+            )
+        return True, f"Summary generated ({len(summary)} chars)", True, summary
+    except Exception as e:
+        error_message = f"Error processing article: {str(e)}"
+        logger.error(f"{error_message}\n{traceback.format_exc()}")
+        return False, error_message, False, ""
+
+
+if __name__ == "__main__":
+    db.remove_duplicate_file_entries()
+    logger.info("Running article summarization standalone")
+    summarize_articles()
+
+
+// File: /home/pimania/dev/infolio/src/textExtraction.py
+import os
+import re
+import tempfile
+import subprocess
+import traceback
+from typing import List, Tuple, Optional
+from pathlib import Path
+from loguru import logger
+import sys
+from . import utils
+import ebooklib
+from ebooklib import epub
+import PyPDF2
+
+# Configure loguru logger
+log_file_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "logs",
+    "extraction.log",
+)
+os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+
+
+class TextExtractionError(Exception):
+    """Custom exception for text extraction errors.
+
+    This class includes a flag to track whether the error has already been logged,
+    which helps prevent duplicate error messages when the exception propagates
+    through multiple functions.
+    """
+
+    def __init__(self, message, already_logged=False):
+        """Initialize a TextExtractionError.
+
+        Args:
+            message: The error message
+            already_logged: Flag indicating if this error has already been logged
+        """
+        self.message = message
+        self.already_logged = already_logged
+        super().__init__(message)
+
+
+def getPdfText(pdf, pages=None):
+    pdfText = []
+    try:
+        pdfFileObj = open(pdf, "rb")
+        pdfReader = PyPDF2.PdfReader(pdfFileObj)
+        pages = len(pdfReader.pages) if not pages else min(pages, len(pdfReader.pages))
+        for pageNumber in range(pages):
+            pageObj = pdfReader.pages[pageNumber]
+            pdfText.append(pageObj.extract_text())
+        pdfFileObj.close()
+    except PyPDF2.errors.PdfReadError:
+        traceback.print_exc()
+        logger.error(f"Error in pdf: {pdf}")
+        return None
+    pdfText = "\n".join(pdfText)
+    return pdfText
+
+
+def extract_error_message(error_text: str) -> str:
+    """Extract the essential error message from stderr output.
+
+    Args:
+        error_text: Error text, potentially containing a traceback
+
+    Returns:
+        str: Concise error message
+    """
+    # For empty or short messages, return as is
+    if not error_text or len(error_text.strip().splitlines()) <= 2:
+        return error_text
+
+    # Find the most relevant error lines
+    lines = error_text.strip().splitlines()
+
+    # Look for common error patterns - the last line with Error/Exception
+    for line in reversed(lines):
+        # Match "ErrorType: message" format
+        if re.search(r"[A-Za-z0-9_.]+(?:Error|Exception):", line):
+            return line.strip()
+
+    # No specific error pattern found, return the last meaningful line
+    for line in reversed(lines):
+        line = line.strip()
+        if line and not line.startswith("^") and not line.startswith("~"):
+            return line
+
+    # Fallback - the last line is often a good summary
+    return lines[-1] if lines else error_text
+
+
+def run_command(cmd: List[str], timeout: int = 60) -> Tuple[bool, str]:
+    """Run a command with timeout and return success status and output.
+
+    Args:
+        cmd: Command and arguments as a list
+        timeout: Maximum execution time in seconds
+
+    Returns:
+        Tuple[bool, str]: Success status and command output/error
+    """
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode == 0:
+            return True, result.stdout
+        else:
+            error_msg = extract_error_message(result.stderr)
+            return False, error_msg
+    except subprocess.TimeoutExpired:
+        error_msg = f"Command timed out after {timeout} seconds: {' '.join(cmd)}"
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Exception running command: {str(e)}"
+        return False, error_msg
+
+
+def extract_text_from_pdf(
+    file_path: str, max_words: Optional[int] = None
+) -> Tuple[str, str, int]:
+    """Extract text from a PDF file using multiple methods.
+
+    Args:
+        file_path: Path to the PDF file
+        max_words: Maximum number of words to extract
+
+    Returns:
+        Tuple[str, str, int]: Extracted text, method used, word count
+    """
+    extraction_methods = [
+        ("pdftotext", extract_pdf_with_pdftotext),
+        ("PyPDF2", extract_pdf_with_pypdf2),
+        ("getPdfText", extract_pdf_with_getPdfText),
+    ]
+
+    errors = []
+    for method_name, method_func in extraction_methods:
+        try:
+            text = method_func(file_path)
+            if text and len(text.strip()) > 0:
+                # Clean the text
+                text = clean_text(text)
+                words = text.split()
+                word_count = len(words)
+
+                if max_words is not None and word_count > max_words:
+                    text = " ".join(words[:max_words])
+                    word_count = max_words
+
+                return text, method_name, word_count
+            else:
+                error_msg = f"{method_name}: Empty text"
+                errors.append(error_msg)
+                logger.debug(
+                    f"PDF extraction method '{method_name}' returned empty text for {file_path}"
+                )
+        except Exception as e:
+            error_msg = f"{method_name}: {str(e)}"
+            errors.append(error_msg)
+            logger.debug(
+                f"PDF extraction method '{method_name}' failed for {file_path}: {str(e)}"
+            )
+
+    # Only log errors if all methods failed
+    error_details = "\n".join([f"  - {err}" for err in errors])
+    log_error = f"All PDF extraction methods failed for file: {file_path}\nDetailed errors:\n{error_details}"
+    logger.debug(log_error)
+    raise TextExtractionError(log_error, already_logged=True)
+
+
+def extract_pdf_with_pdftotext(file_path: str) -> str:
+    """Extract text from PDF using pdftotext command (from poppler-utils).
+
+    Args:
+        file_path: Path to the PDF file
+
+    Returns:
+        str: Extracted text
+    """
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as temp:
+        temp_path = temp.name
+
+    success, output = run_command(["pdftotext", "-layout", file_path, temp_path])
+
+    if not success:
+        os.unlink(temp_path)
+        raise TextExtractionError(f"pdftotext failed: {output}")
+
+    with open(temp_path, "r", errors="replace") as f:
+        text = f.read()
+
+    os.unlink(temp_path)
+    return text
+
+
+def extract_pdf_with_pypdf2(file_path: str) -> str:
+    """Extract text from PDF using PyPDF2 library.
+
+    Args:
+        file_path: Path to the PDF file
+
+    Returns:
+        str: Extracted text
+    """
+    try:
+        import PyPDF2
+    except ImportError:
+        raise TextExtractionError("PyPDF2 is not installed")
+
+    text = ""
+    try:
+        with open(file_path, "rb") as f:
+            pdf_reader = PyPDF2.PdfReader(f)
+            num_pages = len(pdf_reader.pages)
+
+            for page_num in range(num_pages):
+                page = pdf_reader.pages[page_num]
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n\n"
+    except Exception as e:
+        raise TextExtractionError(f"PyPDF2 extraction failed: {str(e)}")
+
+    return text
+
+
+def extract_pdf_with_getPdfText(file_path: str) -> str:
+    """Extract text from PDF using the existing getPdfText function.
+
+    Args:
+        file_path: Path to the PDF file
+
+    Returns:
+        str: Extracted text
+    """
+    try:
+        text = getPdfText(file_path)
+        return text
+    except Exception as e:
+        raise TextExtractionError(f"getPdfText failed: {str(e)}")
+
+
+def extract_text_from_html(
+    file_path: str, max_words: int = None
+) -> Tuple[str, str, int]:
+    """Extract text from an HTML or MHTML file using multiple methods.
+
+    Args:
+        file_path: Path to the HTML file
+        max_words: Maximum number of words to extract
+
+    Returns:
+        Tuple[str, str, int]: Extracted text, method used, word count
+    """
+    errors = []
+
+    # Special handling for MHTML files
+    if file_path.lower().endswith(".mhtml") or file_path.lower().endswith(".mht"):
+        try:
+            text = extract_mhtml_specialized(file_path)
+            if text and len(text.strip()) > 0:
+                text = clean_text(text)
+                words = text.split()
+                word_count = len(words)
+
+                if max_words is not None and word_count > max_words:
+                    text = " ".join(words[:max_words])
+                    word_count = max_words
+
+                return text, "mhtml_specialized", word_count
+        except Exception as e:
+            error_msg = f"mhtml_specialized: {str(e)}"
+            errors.append(error_msg)
+            logger.debug(
+                f"MHTML specialized extraction failed for {file_path}: {str(e)}"
+            )
+            # Continue with regular HTML extraction methods
+
+    extraction_methods = [
+        ("html2text", extract_html_with_html2text),
+        ("BeautifulSoup", extract_html_with_bs4),
+        ("regex", extract_html_with_regex),
+    ]
+
+    for method_name, method_func in extraction_methods:
+        try:
+            text = method_func(file_path)
+            if text and len(text.strip()) > 0:
+                # Clean the text
+                text = clean_text(text)
+                words = text.split()
+                word_count = len(words)
+
+                if max_words is not None and word_count > max_words:
+                    text = " ".join(words[:max_words])
+                    word_count = max_words
+
+                return text, method_name, word_count
+            else:
+                error_msg = f"{method_name}: Empty text"
+                errors.append(error_msg)
+                logger.debug(
+                    f"HTML extraction method '{method_name}' returned empty text for {file_path}"
+                )
+        except Exception as e:
+            error_msg = f"{method_name}: {str(e)}"
+            errors.append(error_msg)
+            logger.debug(
+                f"HTML extraction method '{method_name}' failed for {file_path}: {str(e)}"
+            )
+
+    # Only log errors if all methods failed
+    error_details = "\n".join([f"  - {err}" for err in errors])
+    log_error = f"All HTML extraction methods failed for file: {file_path}\nDetailed errors:\n{error_details}"
+    logger.debug(log_error)
+    raise TextExtractionError(log_error, already_logged=True)
+
+
+def extract_html_with_html2text(file_path: str) -> str:
+    """Extract text from HTML using html2text command.
+
+    Args:
+        file_path: Path to the HTML file
+
+    Returns:
+        str: Extracted text
+    """
+    success, output = run_command(["html2text", file_path])
+
+    if not success:
+        raise TextExtractionError(f"html2text failed: {output}")
+
+    return output
+
+
+def extract_html_with_bs4(file_path: str) -> str:
+    """Extract text from HTML using BeautifulSoup.
+
+    Args:
+        file_path: Path to the HTML file
+
+    Returns:
+        str: Extracted text
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        raise TextExtractionError("BeautifulSoup is not installed")
+
+    with open(file_path, "r", errors="replace") as f:
+        content = f.read()
+
+    soup = BeautifulSoup(content, "html.parser")
+
+    # Remove script and style elements
+    for script in soup(["script", "style"]):
+        script.extract()
+
+    # Get text
+    text = soup.get_text()
+
+    # Break into lines and remove leading and trailing space on each
+    lines = (line.strip() for line in text.splitlines())
+
+    # Break multi-headlines into a line each
+    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+
+    # Drop blank lines
+    text = "\n".join(chunk for chunk in chunks if chunk)
+
+    return text
+
+
+def extract_html_with_regex(file_path: str) -> str:
+    """Extract text from HTML using regex.
+
+    Args:
+        file_path: Path to the HTML file
+
+    Returns:
+        str: Extracted text
+    """
+    with open(file_path, "r", errors="replace") as f:
+        content = f.read()
+
+    # Remove DOCTYPE and HTML comments
+    content = re.sub(r"<!DOCTYPE[^>]*>", "", content)
+    content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+
+    # Remove script and style sections
+    content = re.sub(
+        r"<script.*?>.*?</script>", "", content, flags=re.DOTALL | re.IGNORECASE
+    )
+    content = re.sub(
+        r"<style.*?>.*?</style>", "", content, flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # Remove all remaining HTML tags
+    content = re.sub(r"<[^>]*>", " ", content)
+
+    # Replace entities
+    content = re.sub(r"&nbsp;", " ", content)
+    content = re.sub(r"&lt;", "<", content)
+    content = re.sub(r"&gt;", ">", content)
+    content = re.sub(r"&amp;", "&", content)
+    content = re.sub(r"&quot;", '"', content)
+    content = re.sub(r"&apos;", "'", content)
+    content = re.sub(r"&#\d+;", "", content)
+    content = re.sub(r"&[a-zA-Z]+;", "", content)
+
+    # Normalize whitespace
+    content = re.sub(r"\s+", " ", content)
+
+    # Split into paragraphs
+    paragraphs = re.split(r"\n\s*\n", content)
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+    return "\n\n".join(paragraphs)
+
+
+def extract_mhtml_specialized(file_path: str) -> str:
+    """Extract text from MHTML using specialized handling for MIME format.
+
+    Args:
+        file_path: Path to the MHTML file
+
+    Returns:
+        str: Extracted text
+    """
+    try:
+        import email
+        import quopri
+        import base64
+        from email.parser import Parser
+    except ImportError:
+        raise TextExtractionError("Failed to import email module, cannot extract MHTML")
+
+    # Open with binary mode to properly handle MIME encoded content
+    with open(file_path, "rb") as f:
+        content = f.read()
+
+    # Parse the MHTML file as an email message
+    try:
+        msg = email.message_from_bytes(content)
+    except Exception as e:
+        # Fallback to string parsing if binary parsing fails
+        try:
+            with open(file_path, "r", errors="replace") as f:
+                content = f.read()
+            msg = email.message_from_string(content)
+        except Exception as inner_e:
+            raise TextExtractionError(
+                f"Failed to parse MHTML: {str(e)} and {str(inner_e)}"
+            )
+
+    html_parts = []
+
+    # Function to recursively process MIME parts
+    def process_part(part):
+        content_type = part.get_content_type()
+
+        if content_type == "text/html":
+            try:
+                charset = part.get_content_charset() or "utf-8"
+                payload = part.get_payload(decode=True)
+
+                if payload:
+                    # Decode quoted-printable or base64 content if necessary
+                    content_transfer_encoding = part.get(
+                        "Content-Transfer-Encoding", ""
+                    ).lower()
+                    if content_transfer_encoding == "quoted-printable":
+                        payload = quopri.decodestring(payload)
+                    elif content_transfer_encoding == "base64":
+                        try:
+                            payload = base64.b64decode(payload)
+                        except:
+                            pass  # If base64 decoding fails, use original payload
+
+                    # Use replace for errors to ensure we don't lose content
+                    decoded_html = payload.decode(charset, errors="replace")
+
+                    # Handle soft line breaks in quoted-printable encoding
+                    decoded_html = re.sub(r"=\r?\n", "", decoded_html)
+
+                    # Pre-clean obvious MIME artifacts before BeautifulSoup processing
+                    decoded_html = re.sub(r"=3D", "=", decoded_html)
+                    decoded_html = re.sub(
+                        r"=([0-9A-F]{2})",
+                        lambda m: bytes.fromhex(m.group(1)).decode(
+                            charset, errors="replace"
+                        ),
+                        decoded_html,
+                    )
+
+                    html_parts.append(decoded_html)
+            except Exception as e:
+                # Log to debug but continue processing
+                logger.debug(f"Error processing HTML part: {str(e)}")
+
+        # Process multipart messages
+        if part.is_multipart():
+            for subpart in part.get_payload():
+                process_part(subpart)
+
+    # Process all parts of the message
+    process_part(msg)
+
+    # If we found HTML parts, extract text using BeautifulSoup
+    if html_parts:
+        try:
+            from bs4 import BeautifulSoup, Comment
+        except ImportError:
+            raise TextExtractionError("BeautifulSoup is not installed")
+
+        text_parts = []
+        for html in html_parts:
+            # Try to find the main content area by looking for common content container tags
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Remove all unnecessary elements first
+            for element in soup(
+                [
+                    "script",
+                    "style",
+                    "head",
+                    "meta",
+                    "link",
+                    "noscript",
+                    "header",
+                    "footer",
+                    "nav",
+                ]
+            ):
+                element.extract()
+
+            # Remove HTML comments
+            for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
+                comment.extract()
+
+            # Try to find the main content area first
+            main_content = None
+            for selector in [
+                "main",
+                "article",
+                ".content",
+                "#content",
+                ".post",
+                "#post",
+                ".entry",
+                "#main",
+            ]:
+                content_area = soup.select(selector)
+                if content_area:
+                    main_content = content_area[0]
+                    break
+
+            # If we found a main content area, use it; otherwise use the full body
+            if main_content:
+                text = main_content.get_text(" ", strip=True)
+            else:
+                # Get text with space separator for better readability
+                text = soup.get_text(" ", strip=True)
+
+            # Break into lines and process
+            lines = []
+            for line in text.splitlines():
+                line = line.strip()
+                if line:
+                    lines.append(line)
+
+            # Drop blank lines and join with newlines
+            clean_text_chunk = "\n".join(lines)
+            if clean_text_chunk:
+                text_parts.append(clean_text_chunk)
+
+        # Join all text parts and return
+        return "\n\n".join(text_parts)
+
+    # Fallback to processing as plain text
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        if content_type == "text/plain":
+            try:
+                charset = part.get_content_charset() or "utf-8"
+                payload = part.get_payload(decode=True)
+
+                # Decode quoted-printable or base64 content if necessary
+                content_transfer_encoding = part.get(
+                    "Content-Transfer-Encoding", ""
+                ).lower()
+                if content_transfer_encoding == "quoted-printable" and payload:
+                    payload = quopri.decodestring(payload)
+                elif content_transfer_encoding == "base64" and payload:
+                    try:
+                        payload = base64.b64decode(payload)
+                    except:
+                        pass  # If base64 decoding fails, use original payload
+
+                if payload:
+                    plain_text = payload.decode(charset, errors="replace")
+                    # Handle soft line breaks in quoted-printable encoding
+                    plain_text = re.sub(r"=\r?\n", "", plain_text)
+                    return plain_text
+            except Exception as e:
+                logger.debug(f"Error processing plain text part: {str(e)}")
+
+    raise TextExtractionError("No suitable content found in MHTML file")
+
+
+def extract_text_from_epub(
+    file_path: str, max_words: int = None
+) -> Tuple[str, str, int]:
+    """Extract text from an EPUB file using multiple methods.
+
+    Args:
+        file_path: Path to the EPUB file
+        max_words: Maximum number of words to extract
+
+    Returns:
+        Tuple[str, str, int]: Extracted text, method used, word count
+    """
+    errors = []
+
+    # Try ebooklib first (direct Python library approach)
+    try:
+        text = extract_epub_with_ebooklib(file_path)
+        if text and len(text.strip()) > 0:
+            # Clean the text
+            text = clean_text(text)
+            words = text.split()
+            word_count = len(words)
+
+            if max_words is not None and word_count > max_words:
+                text = " ".join(words[:max_words])
+                word_count = max_words
+
+            return text, "ebooklib", word_count
+        else:
+            error_msg = "ebooklib: Empty text"
+            errors.append(error_msg)
+            logger.debug(
+                f"EPUB extraction method 'ebooklib' returned empty text for {file_path}"
+            )
+    except Exception as e:
+        error_msg = f"ebooklib: {str(e)}"
+        errors.append(error_msg)
+        logger.debug(
+            f"EPUB extraction method 'ebooklib' failed for {file_path}: {str(e)}"
+        )
+
+    # Fallback to external tools if ebooklib fails
+    extraction_methods = [
+        ("calibre", extract_epub_with_calibre),
+        ("epub2txt", extract_epub_with_epub2txt),
+    ]
+
+    for method_name, method_func in extraction_methods:
+        try:
+            text = method_func(file_path)
+            if text and len(text.strip()) > 0:
+                # Clean the text
+                text = clean_text(text)
+                words = text.split()
+                word_count = len(words)
+
+                if max_words is not None and word_count > max_words:
+                    text = " ".join(words[:max_words])
+                    word_count = max_words
+
+                return text, method_name, word_count
+            else:
+                error_msg = f"{method_name}: Empty text"
+                errors.append(error_msg)
+                logger.debug(
+                    f"EPUB extraction method '{method_name}' returned empty text for {file_path}"
+                )
+        except Exception as e:
+            error_msg = f"{method_name}: {str(e)}"
+            errors.append(error_msg)
+            logger.debug(
+                f"EPUB extraction method '{method_name}' failed for {file_path}: {str(e)}"
+            )
+
+    # Only log errors if all methods failed
+    error_details = "\n".join([f"  - {err}" for err in errors])
+    log_error = f"All EPUB extraction methods failed for file: {file_path}\nDetailed errors:\n{error_details}"
+    logger.debug(log_error)
+    raise TextExtractionError(log_error, already_logged=True)
+
+
+def extract_epub_with_ebooklib(file_path: str) -> str:
+    """Extract text from EPUB using ebooklib Python library.
+
+    Args:
+        file_path: Path to the EPUB file
+
+    Returns:
+        str: Extracted text
+    """
+    try:
+        # Suppress specific warnings from ebooklib
+        import warnings
+
+        # Store original filters
+        original_filters = warnings.filters.copy()
+
+        # Add filters for the specific warnings from ebooklib
+        warnings.filterwarnings(
+            "ignore",
+            message="In the future version we will turn default option ignore_ncx to True",
+        )
+        warnings.filterwarnings(
+            "ignore", message="This search incorrectly ignores the root element"
+        )
+
+        try:
+            # Explicitly set ignore_ncx=True to address the future change warning
+            book = epub.read_epub(file_path)
+
+            # Extract text from all HTML items
+            all_text = []
+            for item in book.get_items():
+                if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                    # Get content as bytes and decode
+                    content = item.get_content()
+                    if content:
+                        # Simple HTML cleaning - remove HTML tags
+                        text = re.sub(
+                            r"<[^>]+>", " ", content.decode("utf-8", errors="replace")
+                        )
+                        all_text.append(text)
+
+            return "\n\n".join(all_text)
+        finally:
+            # Restore original warning filters
+            warnings.filters = original_filters
+    except Exception as e:
+        raise TextExtractionError(f"ebooklib extraction failed: {str(e)}")
+
+
+def extract_epub_with_calibre(file_path: str) -> str:
+    """Extract text from EPUB using calibre's ebook-convert.
+
+    Args:
+        file_path: Path to the EPUB file
+
+    Returns:
+        str: Extracted text
+    """
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as temp:
+        temp_path = temp.name
+
+    success, output = run_command(
+        ["ebook-convert", file_path, temp_path, "--txt-output-encoding=utf-8"]
+    )
+
+    if not success:
+        os.unlink(temp_path)
+        raise TextExtractionError(f"Calibre ebook-convert failed: {output}")
+
+    with open(temp_path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+
+    os.unlink(temp_path)
+    return text
+
+
+def extract_epub_with_epub2txt(file_path: str) -> str:
+    """Extract text from EPUB using epub2txt command.
+
+    Args:
+        file_path: Path to the EPUB file
+
+    Returns:
+        str: Extracted text
+    """
+    success, output = run_command(["epub2txt", file_path])
+
+    if not success:
+        raise TextExtractionError(f"epub2txt failed: {output}")
+
+    return output
+
+
+def extract_text_from_mobi(
+    file_path: str, max_words: int = None
+) -> Tuple[str, str, int]:
+    """Extract text from a MOBI file.
+
+    Args:
+        file_path: Path to the MOBI file
+        max_words: Maximum number of words to extract
+
+    Returns:
+        Tuple[str, str, int]: Extracted text, method used, word count
+    """
+    errors = []
+
+    # First try direct conversion to EPUB in memory and then extract
+    try:
+        text = convert_mobi_and_extract(file_path)
+        if text and len(text.strip()) > 0:
+            # Clean the text
+            text = clean_text(text)
+            words = text.split()
+            word_count = len(words)
+
+            if max_words is not None and word_count > max_words:
+                text = " ".join(words[:max_words])
+                word_count = max_words
+
+            return text, "mobi_direct", word_count
+        else:
+            error_msg = "mobi_direct: Empty text"
+            errors.append(error_msg)
+    except Exception as e:
+        error_msg = f"mobi_direct: {str(e)}"
+        errors.append(error_msg)
+        logger.debug(f"Direct MOBI extraction failed for {file_path}: {str(e)}")
+
+    # Fallback to calibre conversion if direct method fails
+    try:
+        # Create a temp dir for conversion
+        with tempfile.TemporaryDirectory() as temp_dir:
+            epub_path = os.path.join(temp_dir, "temp.epub")
+
+            # Convert MOBI to EPUB using Calibre
+            success, output = run_command(["ebook-convert", file_path, epub_path])
+
+            if not success:
+                error_msg = f"mobi_conversion: {output}"
+                errors.append(error_msg)
+                raise TextExtractionError(f"MOBI to EPUB conversion failed: {output}")
+
+            # Then extract text from the EPUB
+            try:
+                text, method, word_count = extract_text_from_epub(epub_path, max_words)
+                return text, f"mobi_via_{method}", word_count
+            except Exception as e:
+                error_msg = f"epub_extraction_after_conversion: {str(e)}"
+                errors.append(error_msg)
+                raise TextExtractionError(
+                    f"EPUB extraction after MOBI conversion failed: {str(e)}"
+                )
+    except Exception as e:
+        # If we got here, all methods failed
+        error_details = "\n".join([f"  - {err}" for err in errors])
+        if not errors:
+            error_details = f"  - general_mobi_error: {str(e)}"
+        log_error = f"All MOBI extraction methods failed for file: {file_path}\nDetailed errors:\n{error_details}"
+        logger.debug(log_error)
+        raise TextExtractionError(log_error, already_logged=True)
+
+
+def convert_mobi_and_extract(file_path: str) -> str:
+    """Convert MOBI to EPUB then extract text using ebooklib.
+
+    This is an optimized function that tries to minimize disk I/O
+    by using memory operations where possible.
+
+    Args:
+        file_path: Path to the MOBI file
+
+    Returns:
+        str: Extracted text
+    """
+    # First try direct conversion with calibre
+    with tempfile.TemporaryDirectory() as temp_dir:
+        epub_path = os.path.join(temp_dir, "temp.epub")
+
+        # Convert MOBI to EPUB using Calibre
+        success, output = run_command(["ebook-convert", file_path, epub_path])
+
+        if not success:
+            raise TextExtractionError(f"MOBI conversion failed: {output}")
+
+        # Use ebooklib to extract text from the EPUB
+        return extract_epub_with_ebooklib(epub_path)
+
+
+def extract_text_from_file(
+    file_path: str, max_words: Optional[int] = None
+) -> Tuple[str, str, int]:
+    """Extract text from a file based on its format.
+
+    Args:
+        file_path: Path to the file
+        max_words: Maximum number of words to extract
+
+    Returns:
+        Tuple[str, str, int]: Extracted text, method used, word count
+    """
+    file_path = os.path.abspath(file_path)
+    file_ext = os.path.splitext(file_path)[1].lower()
+
+    try:
+        if file_ext in [".pdf"]:
+            return extract_text_from_pdf(file_path, max_words)
+        elif file_ext in [".html", ".htm", ".mhtml", ".mht"]:
+            return extract_text_from_html(file_path, max_words)
+        elif file_ext in [".epub"]:
+            return extract_text_from_epub(file_path, max_words)
+        elif file_ext in [".mobi", ".azw", ".azw3"]:
+            return extract_text_from_mobi(file_path, max_words)
+        elif file_ext in [".txt", ".md"]:
+            # For plain text files, just read them directly
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+
+            text = clean_text(text)
+            words = text.split()
+            word_count = len(words)
+
+            if max_words is not None and word_count > max_words:
+                text = " ".join(words[:max_words]) + "..."
+                word_count = max_words
+
+            return text, "direct_read", word_count
+        else:
+            error_msg = f"Unsupported file format: {file_ext} for file {file_path}"
+            logger.error(error_msg)
+            raise TextExtractionError(error_msg, already_logged=True)
+    except TextExtractionError as e:
+        if not e.already_logged:
+            logger.error(e.message)
+        raise
+    except Exception as e:
+        error_msg = f"Unexpected error during text extraction for file: {file_path}\nError: {str(e)}"
+        logger.error(error_msg)
+        raise TextExtractionError(error_msg, already_logged=True)
+
+
+def clean_text(text: str) -> str:
+    """Clean extracted text.
+
+    Args:
+        text: Raw extracted text
+
+    Returns:
+        str: Cleaned text
+    """
+    if not text:
+        return ""
+
+    # Handle soft line breaks in quoted-printable encoding
+    text = re.sub(r"=\r?\n", "", text)
+
+    # Clean up MIME/HTML artifacts
+    # Handle quoted-printable encoding artifacts more thoroughly
+    text = re.sub(r"=3D", "=", text)
+
+    # Handle URL fragments with (3D pattern (common in MHTML files)
+    text = re.sub(r'\(3D"(https?://[^"]+)"', r'"\1"', text)
+    text = re.sub(r'\[?\]?\(3D"([^"]+)"', r'"\1"', text)
+
+    # Handle other common MHTML artifacts
+    text = re.sub(
+        r'----"\s*\\.*?----', "", text
+    )  # Remove specific boundary markers with backslashes
+    text = re.sub(
+        r'[a-zA-Z0-9]{20,}----"', "", text
+    )  # Remove long alphanumeric sequences that end with ----"
+
+    # Handle other quoted-printable encodings (hex codes after =)
+    text = re.sub(
+        r"=([0-9A-F]{2})",
+        lambda m: bytes.fromhex(m.group(1)).decode("utf-8", errors="replace"),
+        text,
+    )
+
+    # Remove common HTML entities
+    html_entities = {
+        "&lt;": "<",
+        "&gt;": ">",
+        "&amp;": "&",
+        "&quot;": '"',
+        "&apos;": "'",
+        "&nbsp;": " ",
+        "&copy;": " ",
+        "&reg;": " ",
+        "&trade;": " ",
+    }
+    for entity, replacement in html_entities.items():
+        text = text.replace(entity, replacement)
+
+    # Handle numeric HTML entities
+    text = re.sub(r"&#(\d+);", lambda m: chr(int(m.group(1))), text)
+
+    # Remove HTML tags
+    text = re.sub(r"<[^>]+>", " ", text)
+
+    # Remove email and MIME headers
+    headers_to_remove = [
+        "From:",
+        "Subject:",
+        "Date:",
+        "To:",
+        "Cc:",
+        "Content-Type:",
+        "MIME-Version:",
+        "Content-Transfer-Encoding:",
+        "Content-ID:",
+        "Content-Location:",
+        "Snapshot-Content-Location:",
+        "Subject:",
+    ]
+    for header in headers_to_remove:
+        text = re.sub(rf"{re.escape(header)}[^\n]*\n", "", text, flags=re.IGNORECASE)
+
+    # Remove common MHTML/HTML artifacts
+    artifacts_to_remove = [
+        "------MultipartBoundary--",
+        "Content-Type:",
+        "Content-Transfer-Encoding:",
+        "Content-Location:",
+        "Snapshot-",
+        "boundary=",
+        "charset=",
+        "type=",
+        "class=",
+        "rel=",
+        "href=",
+        "http-equiv=",
+        "property=",
+        "content=",
+        "Subject:",
+        "Date:",
+        "MIME-Version:",
+    ]
+    for artifact in artifacts_to_remove:
+        text = re.sub(rf"{re.escape(artifact)}[^\n]*", "", text, flags=re.IGNORECASE)
+
+    # Remove any trailing equal signs (common in MIME encoding)
+    text = re.sub(r"=\s*$", "", text, flags=re.MULTILINE)
+
+    # Remove time patterns often seen in MHTML headers
+    text = re.sub(r"\d{2}:\d{2}:\d{2}\s+[+-]\d{4}", "", text)
+
+    # Remove hex-looking identifiers that appear in the artifacts
+    text = re.sub(r"[a-zA-Z0-9]{20,}----", "", text)
+
+    # Remove lines consisting only of special characters, brackets, or similar artifacts
+    text = re.sub(r"^[=\-_<>\[\](){}\s]+$", "", text, flags=re.MULTILINE)
+
+    # Clean up URL fragments that were part of encoded content
+    text = re.sub(
+        r"https?://[^\s]+\.(?:html|php|aspx|jsp)\s*\\\s*[a-zA-Z0-9]{5,}----", "", text
+    )
+
+    # Additional cleanup for common patterns seen in the artifacts report
+    text = re.sub(
+        r"\[\]\(.*?\)", "", text
+    )  # Remove markdown-style links with empty text
+    text = re.sub(
+        r"\w+\.(?:html|php|aspx|jsp)", "", text
+    )  # Remove standalone file extensions
+
+    # Replace multiple newlines with a single newline
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # Replace multiple spaces with a single space
+    text = re.sub(r" {2,}", " ", text)
+
+    # Remove Unicode replacement characters
+    text = text.replace("�", "")
+
+    # Remove non-printable characters except for newlines and tabs
+    text = "".join(c for c in text if c.isprintable() or c in "\n\t")
+
+    # Trim each line
+    lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        # Skip lines that are too short or contain only punctuation/special chars
+        if len(line) > 1 and not re.match(r"^[=\-_<>\[\](){}\s.,;:!?]+$", line):
+            lines.append(line)
+
+    text = "\n".join(lines)
+
+    # Remove leading and trailing whitespace
+    text = text.strip()
+
+    return text
+
+
+// File: /home/pimania/dev/infolio/src/articleTagging.py
+import os
+import re
+import sys
+import json
+import traceback
+import argparse
+import concurrent.futures
+from pathlib import Path
+from typing import Dict, List, Tuple, Set, Optional
+from loguru import logger
+from dotenv import load_dotenv
+from openai import OpenAI
+from . import db
+from . import textExtraction
+from . import utils
+
+# Constants
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_FILE_PATH = LOG_DIR / "tagging.log"
+
+LOG_DIR.mkdir(exist_ok=True, parents=True)
+
+
+def load_environment_variables() -> None:
+    """Load environment variables from a .env file."""
+    for env_path in [PROJECT_ROOT / ".env", Path.cwd() / ".env", Path(".env")]:
+        if env_path.exists():
+            load_dotenv(dotenv_path=str(env_path))
+            break
+
+
+def setup_tag_database() -> str:
+    """Setup the SQLite database and create necessary tables."""
+    return db.setup_database()
+
+
+class TagManager:
+    """Handle database operations for article tags."""
+
+    def __init__(self):
+        pass
+
+    def _with_connection(self):
+        return db.get_connection()
+
+    def sync_tags_from_config(self) -> None:
+        """Synchronize tag definitions from config.json into the database."""
+        config = utils.getConfig()
+        db.sync_tags_from_config(config)
+
+
+class TagEvaluator:
+    """Evaluate whether an article matches given tag descriptions using OpenRouter API."""
+
+    def __init__(self):
+        self.config = utils.getConfig()
+        self.model = self.config.get("ai_model", "google/gemini-2.0-flash-001")
+        self.batch_size = int(self.config.get("tag_batch_size", 3))
+        logger.info(f"Tag batch size set to {self.batch_size}")
+        self.api_key = os.getenv("OPENROUTER_API_KEY")
+        if not self.api_key:
+            logger.error("OPENROUTER_API_KEY not found in environment variables")
+            raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+
+    def _create_openai_client(self) -> OpenAI:
+        return OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=self.api_key,
+        )
+
+    def evaluate_tags(self, text: str, tags_to_evaluate: List) -> Dict[int, bool]:
+        if not text or not text.strip():
+            logger.warning("No text to evaluate for tags")
+            return {tag["id"]: False for tag in tags_to_evaluate}
+        if not tags_to_evaluate:
+            return {}
+
+        # Assume tags_to_evaluate has only a single element
+        tag = tags_to_evaluate[0]
+        client = self._create_openai_client()
+
+        # Only include the description in the prompt, with no mention of tag name
+        tag_description = tag["description"]
+
+        logger.debug(f"Evaluating article for a single tag using model: {self.model}")
+
+        system_prompt = (
+            "Your task is to determine if the article summary matches the provided description."
+            "Interpret the description literally. You must respond in valid JSON format only."
+        )
+
+        # Simple JSON format with a single boolean response
+        json_format_example = '{"matches": true or false}'
+
+        user_prompt = (
+            f"Please analyze the following article summary to determine if it matches the description provided below. The purpose is to decide whether to add the article to a reading list which should only contain articles which match the description.\n\n"
+            f"Interpret the reading list description literally. Only return true if it accurately describes the article summary.\n\nDescription: {tag_description}\n\n"
+            f"Article summary:\n{text[:6000]}\n\n"
+            f"Based on the description, state if this article summary satisfies the description.\n\n"
+            f"Your response must be valid JSON in this exact format:\n{json_format_example}"
+        )
+
+        max_retries = 3
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={"type": "json_object"},
+                )
+                result_text = response.choices[0].message.content.strip()
+                result_json = json.loads(result_text)
+
+                # Map the result to the tag ID
+                match_result = result_json.get("matches", False)
+                results = {tag["id"]: match_result}
+
+                logger.debug(f"Tag evaluation result: {match_result}")
+
+                return results
+            except json.JSONDecodeError as e:
+                retry_count += 1
+                logger.warning(
+                    f"Attempt {retry_count}: Failed to parse JSON response: {result_text}"
+                )
+                if retry_count >= max_retries:
+                    logger.error(f"All {max_retries} attempts failed. Last error: {e}")
+                    return {tag["id"]: False}
+                user_prompt = (
+                    f"The previous response couldn't be parsed as valid JSON. The error was: {e}\n\n{user_prompt}\n\n"
+                    "IMPORTANT: YOU MUST RETURN ONLY VALID JSON. No explanations or additional text."
+                )
+            except Exception as e:
+                logger.error(f"Error evaluating tags: {e}\n{traceback.format_exc()}")
+                return {tag["id"]: False}
+
+    def batch_evaluate_tags(
+        self, article_id: int, file_name: str, text: str, tags_to_evaluate: List
+    ) -> Dict[int, bool]:
+        if not tags_to_evaluate or not text:
+            return {}
+        tag_batches = [
+            tags_to_evaluate[i : i + self.batch_size]
+            for i in range(0, len(tags_to_evaluate), self.batch_size)
+        ]
+        logger.debug(
+            f"Processing {len(tags_to_evaluate)} tags in {len(tag_batches)} batches (batch size: {self.batch_size})"
+        )
+        tag_results = {}
+        for i, batch in enumerate(tag_batches):
+            try:
+                batch_tag_names = [tag["name"] for tag in batch]
+                logger.debug(
+                    f"Batch {i+1}/{len(tag_batches)}: Evaluating tags {', '.join(batch_tag_names)}"
+                )
+                batch_results = self.evaluate_tags(text, batch)
+                tag_results.update(batch_results)
+                logger.debug(f"Batch {i+1}/{len(tag_batches)}: Completed evaluation")
+            except Exception as e:
+                logger.error(f"Error processing batch {i+1}: {e}")
+        return tag_results
+
+
+class ArticleTagger:
+    """Manage applying tags to articles using parallel processing and AI evaluation."""
+
+    def __init__(self):
+        self.config = utils.getConfig()
+        self.articles_path = self.config.get("articleFileFolder", "")
+        self.max_articles_per_session = int(
+            self.config.get("maxArticlesToTagPerSession", 100)
+        )
+        self.max_tagging_threads = int(self.config.get("llm_api_batch_size", 4))
+        self.tag_evaluator = TagEvaluator()
+        self.tag_article_match_cache = {}
+        self.tag_details_cache = {}
+        # Cache that tracks which articles have already been tagged with which tags
+        self.article_tagged_cache = {}
+        self._cache_tag_search_results()
+
+    def _get_active_tag_ids(self) -> Set[int]:
+        """Get the IDs of all active tags that should be applied to articles."""
+        active_tag_ids = set()
+        with db.get_connection() as conn:
+            cursor = conn.execute("SELECT id, name FROM tags")
+            for tag_id, tag_name in cursor.fetchall():
+                active_tag_ids.add(tag_id)
+        return active_tag_ids
+
+    def _get_articles_needing_tagging(self) -> List[Tuple[int, str, str, str]]:
+        """
+        Get articles that need tagging and are eligible to be tagged with at least one active tag.
+        This method ensures we get enough eligible articles up to max_articles_per_session.
+        """
+        # Get active tag IDs first
+        active_tag_ids = self._get_active_tag_ids()
+
+        # Initialize variables for article collection
+        collected_articles = []
+        current_limit = self.max_articles_per_session
+
+        # Keep fetching articles until we have enough taggable ones or no more are available
+        while len(collected_articles) < self.max_articles_per_session:
+            # Get a batch of articles from the database
+            batch_articles = db.get_articles_needing_tagging(current_limit)
+
+            # If no more articles are available, break the loop
+            if not batch_articles:
+                break
+
+            # Filter articles that are taggable with at least one active tag
+            for article in batch_articles:
+                article_id, file_hash, file_name, text = article
+
+                # Skip articles we've already collected
+                if any(a[0] == article_id for a in collected_articles):
+                    continue
+
+                # Check if this article can be tagged with at least one active tag
+                is_taggable = False
+                for tag_id in active_tag_ids:
+                    # Skip checking tags already applied to this article
+                    article_existing_tags = self.article_tagged_cache.get(
+                        file_name, set()
+                    )
+                    if tag_id in article_existing_tags:
+                        continue
+
+                    # Check if tag is applicable to this article based on filename filtering
+                    if tag_id in self.tag_details_cache:
+                        matchingArticles = self.tag_article_match_cache.get(tag_id)
+                        if (
+                            matchingArticles is None
+                            or file_name.lower() in matchingArticles
+                        ):
+                            # This article can be tagged with at least one tag
+                            is_taggable = True
+                            break
+
+                # If this article is taggable, add it to our collection
+                if is_taggable:
+                    collected_articles.append(article)
+
+                # If we've collected enough articles, stop processing this batch
+                if len(collected_articles) >= self.max_articles_per_session:
+                    break
+
+            # If we've processed all available articles and still need more,
+            # increase the limit for the next fetch
+            if (
+                len(collected_articles) < self.max_articles_per_session
+                and len(batch_articles) < current_limit
+            ):
+                # No more articles available
+                break
+
+            # Increase the limit for the next fetch
+            current_limit *= 2
+
+        return collected_articles
+
+    def _get_tags_for_article(self, file_name: str, active_tag_ids: Set[int]) -> List:
+        """Get tags that need to be evaluated for an article."""
+        tags_to_evaluate = []
+
+        # Get the set of tag IDs already applied to this article (empty set if none)
+        article_existing_tags = self.article_tagged_cache.get(file_name, set())
+
+        for tag_id in active_tag_ids:
+            # Skip tags that have already been applied to this article
+            if tag_id in article_existing_tags:
+                continue
+
+            if tag_id in self.tag_details_cache:
+                tag = self.tag_details_cache[tag_id]
+                matchingArticles = self.tag_article_match_cache.get(tag_id)
+                if (
+                    matchingArticles is None or file_name.lower() in matchingArticles
+                ):  # if tag not in dict, tag has no filters
+                    tags_to_evaluate.append(tag)
+        return tags_to_evaluate
+
+    def _get_tag_criteria_cache_key(self, any_tags, all_tags, not_any_tags) -> str:
+        """Create a cache key for tag search criteria."""
+        any_tags_str = "|".join(sorted(any_tags)) if any_tags else ""
+        all_tags_str = "|".join(sorted(all_tags)) if all_tags else ""
+        not_any_tags_str = "|".join(sorted(not_any_tags)) if not_any_tags else ""
+        return f"{any_tags_str}#{all_tags_str}#{not_any_tags_str}"
+
+    def _cache_tag_search_results(self) -> None:
+        """Cache tag search criteria for tags that have filtering (any/and/not)."""
+        self.tag_details_cache = db.get_all_tag_details()
+
+        # Populate the article_tagged_cache with data about which articles have already been tagged
+        # This will be used to avoid re-evaluating tags that have already been applied
+        articles_with_tags = db.get_all_article_tags()
+        for article_id, file_name, tag_id in articles_with_tags:
+            if file_name not in self.article_tagged_cache:
+                self.article_tagged_cache[file_name] = set()
+            self.article_tagged_cache[file_name].add(tag_id)
+
+        # Cache for tag filtering logic
+        for tag in self.tag_details_cache.values():
+            if tag["any_tags"] or tag["all_tags"] or tag["not_any_tags"]:
+                articlesMatchingTag = db.searchArticlesByTags(
+                    any_tags=tag.get("any_tags"),
+                    all_tags=tag.get("all_tags"),
+                    not_any_tags=tag.get("not_any_tags"),
+                )
+                logger.info(
+                    "Tag",
+                    tag["name"],
+                    "has",
+                    len(articlesMatchingTag),
+                    "potential articles",
+                )
+                self.tag_article_match_cache[tag["id"]] = [
+                    os.path.basename(fileName).lower()
+                    for fileName in articlesMatchingTag
+                ]
+
+    def _prepare_article_work_units(
+        self, article: Tuple[int, str, str, str], active_tag_ids: Set[int]
+    ) -> List[Dict]:
+        """Prepare work units for an article to be processed for content tagging."""
+        article_id, file_hash, file_name, summary = article
+        tags_to_evaluate = self._get_tags_for_article(file_name, active_tag_ids)
+        work_units = []
+
+        if not tags_to_evaluate:
+            return work_units
+
+        # Split tags based on use_summary attribute
+        summary_tags = [
+            tag for tag in tags_to_evaluate if tag.get("use_summary", False)
+        ]
+        full_text_tags = [
+            tag for tag in tags_to_evaluate if not tag.get("use_summary", False)
+        ]
+
+        # Create work unit for tags that use summary
+        if summary_tags and summary:
+            work_units.append(
+                {
+                    "article_id": article_id,
+                    "file_name": file_name,
+                    "text": summary,
+                    "tags": summary_tags,
+                }
+            )
+
+        # Create work unit for tags that need full text
+        if full_text_tags:
+            try:
+                file_path = os.path.join(self.articles_path, file_name)
+                # Use default max_words if not specified
+                max_words = int(self.config.get("summary_in_max_words", 3000))
+                text, extraction_method, word_count = (
+                    textExtraction.extract_text_from_file(file_path, max_words)
+                )
+                work_units.append(
+                    {
+                        "article_id": article_id,
+                        "file_name": file_name,
+                        "text": text,
+                        "tags": full_text_tags,
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error extracting text from {file_path}: {str(e)}")
+
+        return work_units
+
+    def _process_article_tag_batch(
+        self, article_id: int, file_name: str, text: str, tags_batch: List
+    ) -> Dict[int, bool]:
+        """Process a batch of tags for an article."""
+        logger.debug(f"Evaluating article {file_name} with {len(tags_batch)} tags")
+        try:
+            return self.tag_evaluator.batch_evaluate_tags(
+                article_id, file_name, text, tags_batch
+            )
+        except Exception as e:
+            logger.error(f"Error evaluating article {file_name}: {e}")
+            logger.error(traceback.format_exc())
+            return {}
+
+    def _process_work_units(self, work_units: List[Dict]) -> Dict[int, Dict]:
+        """Process all work units in parallel using a ThreadPoolExecutor."""
+        if not work_units:
+            logger.debug("No work units to process")
+            return {}
+        logger.info(f"Processing {len(work_units)} work units in parallel")
+        results_by_article = {}
+        file_names_by_article = {}
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=self.max_tagging_threads
+        ) as executor:
+            futures = {}
+            for unit in work_units:
+                article_id = unit["article_id"]
+                file_name = unit["file_name"]
+                file_names_by_article[article_id] = file_name
+                text = unit["text"]
+                future = executor.submit(
+                    self._process_article_tag_batch,
+                    article_id,
+                    file_name,
+                    text,
+                    unit["tags"],
+                )
+                futures[future] = article_id
+            for future in concurrent.futures.as_completed(futures):
+                article_id = futures[future]
+                try:
+                    batch_results = future.result()
+                    if article_id not in results_by_article:
+                        results_by_article[article_id] = {
+                            "matches": {},
+                            "non_matches": {},
+                        }
+                    for tag_id, matched in batch_results.items():
+                        if matched:
+                            results_by_article[article_id]["matches"][tag_id] = True
+                        else:
+                            results_by_article[article_id]["non_matches"][tag_id] = True
+                except Exception as e:
+                    logger.error(
+                        f"Error processing article {article_id}: {e}\n{traceback.format_exc()}"
+                    )
+        return results_by_article
+
+    def _apply_tag_results_to_articles(
+        self, results_by_article: Dict[int, Dict]
+    ) -> None:
+        """Apply tag evaluation results to articles in the database."""
+        for article_id, results in results_by_article.items():
+            for tag_id in results.get("matches", {}):
+                db.set_article_tag(article_id, tag_id, True)
+            for tag_id in results.get("non_matches", {}):
+                db.set_article_tag(article_id, tag_id, False)
+
+    def apply_tags_to_articles(self) -> None:
+        """Apply content-based tags to articles based on tag definitions."""
+        logger.info("Starting tagging process...")
+        articles = self._get_articles_needing_tagging()
+        if not articles:
+            logger.info("No articles need tagging")
+            return
+        logger.info(f"Found {len(articles)} articles for tagging")
+        active_tag_ids = self._get_active_tag_ids()
+        logger.info(f"Found {len(active_tag_ids)} active tags")
+
+        all_work_units = []
+        for article in articles:
+            work_units = self._prepare_article_work_units(article, active_tag_ids)
+            all_work_units.extend(work_units)
+        logger.info(f"Created {len(all_work_units)} work units")
+
+        if all_work_units:
+            results_by_article = self._process_work_units(all_work_units)
+            self._apply_tag_results_to_articles(results_by_article)
+
+            # Initialize tagStats before processing any tags
+            tagStats = {}
+            # First, count all direct tag matches from content-based tagging
+            for _, results in results_by_article.items():
+                for tag_id in results.get("matches", {}):
+                    tagStats[tag_id] = tagStats.get(tag_id, 0) + 1
+
+            for tag_id, count in tagStats.items():
+                tag_details = self.tag_details_cache.get(tag_id)
+                if tag_details:
+                    logger.info(f"Tag {tag_details['name']}: {count} articles")
+
+        logger.info("Tagging process completed")
+
+
+def analyze_tag_results(tag_name: str) -> None:
+    """Analyze which articles match or do not match a specific tag and output a markdown report."""
+    tag_id = db.get_tag_id_by_name(tag_name)
+    if not tag_id:
+        logger.error(f"Tag not found: {tag_name}")
+        return
+    matching_articles = db.get_articles_by_tag(tag_name)
+    non_matching_articles = db.get_articles_not_matching_tag(tag_name)
+
+    # Separate matching articles into URLs and non-URLs
+    matching_read_urls = []
+    matching_unread_urls = []
+    matching_files = []
+
+    for file_name in matching_articles:
+        filePath = os.path.join(utils.getConfig()["articleFileFolder"], file_name)
+        # For HTML and MHTML files, try to get the URL
+        if file_name.lower().endswith((".html", ".mhtml")) and os.path.exists(filePath):
+            url = utils.getUrlOfArticle(filePath)
+            if url:
+                if file_name[0] == ".":
+                    matching_read_urls.append(url)
+                else:
+                    matching_unread_urls.append(url)
+                continue
+        # If no URL found or not an HTML/MHTML file, add to files list
+        matching_files.append(file_name)
+
+    # Separate non-matching articles into URLs and non-URLs
+    non_matching_urls = []
+    non_matching_files = []
+
+    for file_name in non_matching_articles:
+        filePath = os.path.join(utils.getConfig()["articleFileFolder"], file_name)
+        # For HTML and MHTML files, try to get the URL
+        if file_name.lower().endswith((".html", ".mhtml")) and os.path.exists(filePath):
+            url = utils.getUrlOfArticle(filePath)
+            if url:  # Only use URL if one was found
+                non_matching_urls.append(url)
+                continue
+        # If no URL found or not an HTML/MHTML file, add to files list
+        non_matching_files.append(file_name)
+
+    # Create the report with separate sections
+    report = f"# Tag Analysis: {tag_name}\n\n"
+
+    # Matching Articles section
+    report += f"## Matching Articles ({len(matching_articles)})\n\n"
+
+    # URLs subsection
+    report += f"### Read URLs ({len(matching_read_urls)})\n\n"
+    for url in matching_read_urls:
+        report += f"- {url}\n"
+
+    report += f"### Unread URLs ({len(matching_unread_urls)})\n\n"
+    for url in matching_unread_urls:
+        report += f"- {url}\n"
+
+    # Files subsection
+    report += f"\n### Files ({len(matching_files)})\n\n"
+    for file_name in matching_files:
+        report += f"- {file_name}\n"
+
+    # Non-Matching Articles section
+    report += f"\n## Non-Matching Articles ({len(non_matching_articles)})\n\n"
+
+    # URLs subsection
+    report += f"### URLs ({len(non_matching_urls)})\n\n"
+    for url in non_matching_urls:
+        report += f"- {url}\n"
+
+    # Files subsection
+    report += f"\n### Files ({len(non_matching_files)})\n\n"
+    for file_name in non_matching_files:
+        report += f"- {file_name}\n"
+
+    report_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "storage",
+        f"tag_analysis_{tag_name}.md",
+    )
+    with open(report_path, "w") as f:
+        f.write(report)
+    logger.info(f"Tag analysis saved to: {report_path}")
+
+
+def updatePerTagFiles(root_folder):
+    """Generate file lists per tag for both URLs and file names/hashes.
+
+    This function queries the database for all tags, then for each tag:
+    1. Creates a file containing the URLs and titles of HTML/MHTML articles with that tag
+    2. Creates a file containing names and hashes of all articles with that tag
+
+    All files are stored in a single "tag_files" subdirectory.
+
+    Args:
+        root_folder: Path to the root folder where articles are stored
+    """
+
+    # Ensure database is set up
+    db.setup_database()
+
+    # Get the tag files directory from config
+    tag_files_dir = utils.getConfig()["backupFolderPath"]
+    os.makedirs(tag_files_dir, exist_ok=True)
+
+    # Load existing hash data from all JSON files to avoid recalculating hashes
+    existing_hash_data = {}
+    for file_name in os.listdir(tag_files_dir):
+        if file_name.endswith("_files_and_hashes.json"):
+            file_path = os.path.join(tag_files_dir, file_name)
+            try:
+                with open(file_path, "r") as f:
+                    tag_hash_data = json.load(f)
+                    # Add to our master dictionary of file paths and their hashes
+                    existing_hash_data.update(tag_hash_data)
+            except (json.JSONDecodeError, IOError):
+                # If file is corrupted, skip it
+                pass
+
+    # Get all tags with article counts
+    tags = db.get_all_tags_with_article_count()
+
+    # Total number of tags processed
+    total_tags = len(tags)
+    tags_processed = 0
+    skipped_tags = 0
+
+    # Process each tag
+    for tag_id, tag_name, article_count in tags:
+        # Skip tags with 0 articles
+        if article_count == 0:
+            skipped_tags += 1
+            continue
+
+        tags_processed += 1
+        logger.debug(
+            f"Processing tag {tags_processed}/{total_tags}: {tag_name} ({article_count} articles)"
+        )
+
+        # Get all articles with this tag
+        tagged_articles = db.get_articles_for_tag(tag_id)
+
+        # Lists to store URLs and file data
+        urls_with_titles = []
+        file_data = {}
+
+        # Process each article
+        for article_id, file_name in tagged_articles:
+            try:
+                # Find the full path of the article
+                article_path = os.path.join(root_folder, file_name)
+
+                # Check if we already have hash for this file
+                if article_path in existing_hash_data and os.path.exists(article_path):
+                    # Use existing hash if file exists
+                    file_hash = existing_hash_data[article_path]
+                else:
+                    # Calculate hash only for new or modified files
+                    file_hash = utils.calculate_ipfs_hash(article_path)
+
+                file_data[article_path] = file_hash
+
+                # Add URL and title if available (only for HTML/MHTML files)
+                if article_path.lower().endswith((".html", ".mhtml")):
+                    article_url = utils.getUrlOfArticle(article_path)
+                    if article_url:
+                        # Try to extract a title from the file if possible
+                        title_display = os.path.splitext(
+                            os.path.basename(article_path)
+                        )[0]
+                        urls_with_titles.append((article_url, title_display))
+            except Exception as e:
+                logger.error(f"Error processing {file_name}: {e}")
+
+        # Sanitize tag name for file system
+        safe_tag_name = re.sub(r"[^\w\-_\.]", "_", tag_name)
+
+        # Write URL file if we found any URLs
+        if urls_with_titles:
+            tag_url_file_path = os.path.join(tag_files_dir, f"{safe_tag_name}_urls.txt")
+            with open(tag_url_file_path, "w") as f:
+                for url, title in urls_with_titles:
+                    f.write(f"# {title}\n{url}\n\n")
+
+            logger.debug(
+                f"  - Created URL file with {len(urls_with_titles)} URLs: {os.path.basename(tag_url_file_path)}"
+            )
+
+        # Write file data if we found any files
+        if file_data:
+            tag_file_path = os.path.join(
+                tag_files_dir, f"{safe_tag_name}_files_and_hashes.json"
+            )
+
+            with open(tag_file_path, "w") as f:
+                json.dump(file_data, f, indent=2)
+
+            logger.debug(
+                f"  - Created file hash data with {len(file_data)} files: {os.path.basename(tag_file_path)}"
+            )
+
+    # Clean up the database by removing orphaned items
+    orphaned_tags, orphaned_hashes = db.clean_orphaned_database_items()
+    if orphaned_tags > 0:
+        logger.info(f"Removed {orphaned_tags} tags with no associated articles")
+    if orphaned_hashes > 0:
+        logger.info(f"Removed {orphaned_hashes} orphaned tag hash entries")
+
+    logger.info(
+        f"Finished processing {tags_processed} tags ({skipped_tags} tags with 0 articles skipped)"
+    )
+    logger.info(f"All tag files have been generated in: {tag_files_dir}")
+
+
+def tagArticles(all_tags=True, limit=None, analyze=None, debug=False):
+    """
+    Main entry point for the tagging process.
+
+    Args:
+        all_tags: Create content tags.
+        limit: Limit the number of articles to process.
+        analyze: Analyze a specific tag.
+        debug: Enable debug logging.
+    """
+    load_environment_variables()
+    if __name__ == "__main__":
+        parser = argparse.ArgumentParser(description="Manage article tags.")
+        parser.add_argument("--all", action="store_true", help="Create content tags")
+        parser.add_argument(
+            "--limit", type=int, help="Limit the number of articles to process"
+        )
+        parser.add_argument("--analyze", type=str, help="Analyze a specific tag")
+        parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+        args = parser.parse_args()
+        all_tags = args.all
+        limit = args.limit
+        analyze = args.analyze
+        debug = args.debug
+
+    if debug:
+        logger.add(sys.stdout, level="DEBUG")
+
+    if analyze:
+        analyze_tag_results(analyze)
+        return
+
+    tag_manager = TagManager()
+    tag_manager.sync_tags_from_config()
+    logger.info("Tags synced from config")
+
+    if all_tags:
+        logger.info("Applying content-based tags...")
+        article_tagger = ArticleTagger()
+        article_tagger.apply_tags_to_articles()
+        logger.info("Content tagging completed")
+
+
+if __name__ == "__main__":
+    tagArticles()
+
+
+// File: /home/pimania/dev/infolio/src/__init__.py
+
+
+// File: /home/pimania/dev/infolio/src/db.py
+import sqlite3
+import os
+import json
+import hashlib
+import traceback
+from pathlib import Path
+from typing import Dict, List, Tuple, Any, Set, Optional
+from loguru import logger
+from . import utils
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+STORAGE_DIR = PROJECT_ROOT / "storage"
+DB_FILENAME = "article_summaries.db"
+DB_PATH = STORAGE_DIR / DB_FILENAME
+
+
+def get_db_path() -> str:
+    STORAGE_DIR.mkdir(exist_ok=True)
+    return str(DB_PATH)
+
+
+def get_connection() -> sqlite3.Connection:
+    return sqlite3.connect(get_db_path())
+
+
+def setup_database() -> str:
+    db_path = get_db_path()
+    with get_connection() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS article_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT UNIQUE,
+                file_name TEXT UNIQUE,
+                file_format TEXT,
+                summary TEXT,
+                extraction_method TEXT,
+                word_count INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE,
+                description TEXT,
+                use_summary BOOLEAN,
+                any_tags TEXT,
+                all_tags TEXT,
+                not_any_tags TEXT,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS article_tags (
+                article_id INTEGER,
+                tag_id INTEGER,
+                matches BOOLEAN NOT NULL DEFAULT 1,
+                PRIMARY KEY (article_id, tag_id),
+                FOREIGN KEY (article_id) REFERENCES article_summaries(id),
+                FOREIGN KEY (tag_id) REFERENCES tags(id)
+            );
+            CREATE TABLE IF NOT EXISTS tag_hashes (
+                tag_id INTEGER PRIMARY KEY,
+                property_hash TEXT,
+                FOREIGN KEY (tag_id) REFERENCES tags(id)
+            );
+            """
+        )
+    return db_path
+
+
+# Article Summary Operations
+
+
+def get_article_by_hash(file_hash: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id, file_hash, file_name, file_format, summary, extraction_method, word_count, created_at FROM article_summaries WHERE file_hash = ?",
+            (file_hash,),
+        )
+        row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "file_hash": row[1],
+        "file_name": row[2],
+        "file_format": row[3],
+        "summary": row[4],
+        "extraction_method": row[5],
+        "word_count": row[6],
+        "created_at": row[7],
+    }
+
+
+def get_article_by_file_name(file_name: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id, file_hash, file_name, file_format, summary, extraction_method, word_count, created_at FROM article_summaries WHERE file_name = ?",
+            (file_name,),
+        )
+        row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "file_hash": row[1],
+        "file_name": row[2],
+        "file_format": row[3],
+        "summary": row[4],
+        "extraction_method": row[5],
+        "word_count": row[6],
+        "created_at": row[7],
+    }
+
+
+def update_article_summary(
+    file_hash: str,
+    file_name: str,
+    file_format: str,
+    summary: str,
+    extraction_method: str,
+    word_count: int,
+) -> int:
+    with get_connection() as conn:
+        article = get_article_by_hash(file_hash)
+        if article is not None:
+            # Article exists, update it
+            conn.execute(
+                """
+                UPDATE article_summaries
+                SET file_name = ?, file_format = ?, summary = ?, extraction_method = ?, word_count = ?
+                WHERE id = ?
+                """,
+                (
+                    file_name,
+                    file_format,
+                    summary,
+                    extraction_method,
+                    word_count,
+                    article["id"],
+                ),
+            )
+            article_id = article["id"]
+        else:
+            # Article doesn't exist, insert it
+            cursor = conn.execute(
+                """
+                INSERT INTO article_summaries (file_hash, file_name, file_format, summary, extraction_method, word_count)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    file_hash,
+                    file_name,
+                    file_format,
+                    summary,
+                    extraction_method,
+                    word_count,
+                ),
+            )
+            article_id = cursor.lastrowid
+        conn.commit()
+    return article_id
+
+
+def add_file_to_database(
+    file_hash: str,
+    file_name: str,
+    file_format: str,
+    summary: Optional[str] = None,
+    extraction_method: Optional[str] = None,
+    word_count: int = 0,
+) -> int:
+    with get_connection() as conn:
+        # Check for article with matching hash or file name
+        cursor = conn.execute(
+            """
+            SELECT id FROM article_summaries 
+            WHERE file_hash = ? OR file_name = ?
+            """,
+            (file_hash, file_name),
+        )
+        existing_article = cursor.fetchone()
+
+        if existing_article:
+            article_id = existing_article[0]
+            # Update the existing article with new data
+            conn.execute(
+                """
+                UPDATE article_summaries 
+                SET file_hash = ?, file_name = ?, file_format = ?, 
+                    summary = ?, extraction_method = ?, word_count = ?
+                WHERE id = ?
+                """,
+                (
+                    file_hash,
+                    file_name,
+                    file_format,
+                    summary,
+                    extraction_method,
+                    word_count,
+                    article_id,
+                ),
+            )
+            conn.commit()
+            return article_id
+
+        # Insert new article if no match found
+        cursor = conn.execute(
+            """
+            INSERT INTO article_summaries (file_hash, file_name, file_format, summary, extraction_method, word_count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (file_hash, file_name, file_format, summary, extraction_method, word_count),
+        )
+        article_id = cursor.lastrowid
+        conn.commit()
+    return article_id
+
+
+def get_all_file_hashes() -> List[str]:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT file_hash FROM article_summaries")
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_articles_needing_summary() -> List[Tuple[str, str]]:
+    with get_connection() as conn:
+        # First, let's check if there are any inconsistencies in the data
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM article_summaries WHERE summary IS NOT NULL AND summary != '' AND summary != 'failed_to_summarise' AND summary != 'failed_to_extract'"
+        )
+        summarized_count = cursor.fetchone()[0]
+
+        cursor = conn.execute("SELECT COUNT(*) FROM article_summaries")
+        total_count = cursor.fetchone()[0]
+
+        logger.debug(
+            f"Database has {total_count} total articles, {summarized_count} with summaries"
+        )
+
+        # Get articles that truly need summarization
+        cursor = conn.execute(
+            "SELECT file_hash, file_name FROM article_summaries WHERE summary IS NULL OR summary = '' OR (summary != 'failed_to_summarise' AND summary != 'failed_to_extract' AND summary = '')"
+        )
+        return cursor.fetchall()
+
+
+def remove_nonexistent_files(existing_files: Set[str]) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT id, file_name FROM article_summaries")
+        files_to_remove = [
+            file_id
+            for file_id, file_name in cursor.fetchall()
+            if file_name not in existing_files
+        ]
+        if files_to_remove:
+            for file_id in files_to_remove:
+                conn.execute(
+                    "DELETE FROM article_tags WHERE article_id = ?", (file_id,)
+                )
+            placeholders = ",".join("?" for _ in files_to_remove)
+            conn.execute(
+                f"DELETE FROM article_summaries WHERE id IN ({placeholders})",
+                files_to_remove,
+            )
+            conn.commit()
+        return len(files_to_remove)
+
+
+def remove_duplicate_file_entries() -> int:
+    """
+    Finds entries in the summaries table with the same file name and deletes duplicates.
+    Keeps the most recently created entry for each duplicate file name.
+
+    Returns:
+        int: Number of duplicate entries removed
+    """
+    removed_count = 0
+    with get_connection() as conn:
+        # Find file names that have multiple entries
+        cursor = conn.execute(
+            """
+            SELECT file_name, COUNT(*) as count
+            FROM article_summaries
+            GROUP BY file_name
+            HAVING count > 1
+            """
+        )
+        duplicate_files = cursor.fetchall()
+
+        for file_name, count in duplicate_files:
+            logger.info(f"Found {count} entries for file '{file_name}'")
+
+            # Get all records for this file name, ordered by created_at timestamp (newest first)
+            cursor = conn.execute(
+                """
+                SELECT id, file_hash, created_at
+                FROM article_summaries
+                WHERE file_name = ?
+                ORDER BY created_at DESC
+                """,
+                (file_name,),
+            )
+            entries = cursor.fetchall()
+
+            # Keep the first (newest) entry and delete the rest
+            keep_id = entries[0][0]
+            keep_hash = entries[0][1]
+
+            # Delete all other entries for this file name
+            for entry_id, entry_hash, _ in entries[1:]:
+                logger.info(
+                    f"Removing duplicate entry: id={entry_id}, file_hash={entry_hash}"
+                )
+
+                # First delete related records in article_tags table
+                conn.execute(
+                    "DELETE FROM article_tags WHERE article_id = ?", (entry_id,)
+                )
+
+                # Then delete the article summary entry
+                conn.execute("DELETE FROM article_summaries WHERE id = ?", (entry_id,))
+
+                removed_count += 1
+
+        conn.commit()
+
+    logger.info(f"Removed {removed_count} duplicate entries from the database")
+    return removed_count
+
+
+# Tag Operations
+
+
+def get_tag_property_hash(
+    description: str,
+    use_summary: bool,
+    any_tags: List[str] = None,
+    all_tags: List[str] = None,
+    not_any_tags: List[str] = None,
+) -> str:
+    any_tags = any_tags or []
+    all_tags = all_tags or []
+    not_any_tags = not_any_tags or []
+    property_string = f"{description}|{use_summary}|{'|'.join(sorted(any_tags))}|{'|'.join(sorted(all_tags))}|{'|'.join(sorted(not_any_tags))}"
+    return hashlib.md5(property_string.encode()).hexdigest()
+
+
+def sync_tags_from_config(config: Dict[str, Any]) -> None:
+    tag_config = config.get("article_tags", {})
+    if not tag_config:
+        logger.error("No 'article_tags' section found in config.json")
+        return
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(tags)")
+        columns = {row[1] for row in cursor.fetchall()}
+        for col in ("any_tags", "all_tags", "not_any_tags"):
+            if col not in columns:
+                cursor.execute(f"ALTER TABLE tags ADD COLUMN {col} TEXT")
+
+        cursor.execute(
+            "SELECT id, name, description, use_summary, any_tags, all_tags, not_any_tags FROM tags"
+        )
+        existing_tags = {
+            row[1]: {
+                "id": row[0],
+                "description": row[2],
+                "use_summary": bool(row[3]),
+                "any_tags": json.loads(row[4]) if row[4] else [],
+                "all_tags": json.loads(row[5]) if row[5] else [],
+                "not_any_tags": json.loads(row[6]) if row[6] else [],
+            }
+            for row in cursor.fetchall()
+        }
+
+        cursor.execute("SELECT tag_id, property_hash FROM tag_hashes")
+        property_hashes = {row[0]: row[1] for row in cursor.fetchall()}
+
+        config_tag_names = {
+            tag_name
+            for tag_name, tag_data in tag_config.items()
+            if not isinstance(tag_data, list)
+        }
+
+        for tag_name, tag_data in tag_config.items():
+            if isinstance(tag_data, list):
+                continue
+            description = tag_data.get("description", "")
+            use_summary = tag_data.get("use_summary", True)
+            any_tags = tag_data.get("any_tags", [])
+            all_tags = tag_data.get("all_tags", [])
+            not_any_tags = tag_data.get("not_any_tags", [])
+            new_hash = get_tag_property_hash(
+                description, use_summary, any_tags, all_tags, not_any_tags
+            )
+            if tag_name in existing_tags:
+                tag_id = existing_tags[tag_name]["id"]
+                if property_hashes.get(tag_id) != new_hash:
+                    cursor.execute(
+                        """
+                        UPDATE tags SET description = ?, use_summary = ?, any_tags = ?, all_tags = ?, not_any_tags = ?, last_updated = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (
+                            description,
+                            use_summary,
+                            json.dumps(any_tags) if any_tags else None,
+                            json.dumps(all_tags) if all_tags else None,
+                            json.dumps(not_any_tags) if not_any_tags else None,
+                            tag_id,
+                        ),
+                    )
+                    if property_hashes.get(tag_id):
+                        cursor.execute(
+                            "UPDATE tag_hashes SET property_hash = ? WHERE tag_id = ?",
+                            (new_hash, tag_id),
+                        )
+                    else:
+                        cursor.execute(
+                            "INSERT INTO tag_hashes (tag_id, property_hash) VALUES (?, ?)",
+                            (tag_id, new_hash),
+                        )
+                    cursor.execute(
+                        "DELETE FROM article_tags WHERE tag_id = ?", (tag_id,)
+                    )
+                    logger.debug(
+                        f"Updated tag '{tag_name}' and cleared previous assignments"
+                    )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO tags (name, description, use_summary, any_tags, all_tags, not_any_tags)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tag_name,
+                        description,
+                        use_summary,
+                        json.dumps(any_tags) if any_tags else None,
+                        json.dumps(all_tags) if all_tags else None,
+                        json.dumps(not_any_tags) if not_any_tags else None,
+                    ),
+                )
+                tag_id = cursor.lastrowid
+                cursor.execute(
+                    "INSERT INTO tag_hashes (tag_id, property_hash) VALUES (?, ?)",
+                    (tag_id, new_hash),
+                )
+                logger.debug(f"Added new tag '{tag_name}'")
+
+        for tag_name in set(existing_tags) - config_tag_names:
+            tag_id = existing_tags[tag_name]["id"]
+            cursor.execute("DELETE FROM article_tags WHERE tag_id = ?", (tag_id,))
+            cursor.execute("DELETE FROM tag_hashes WHERE tag_id = ?", (tag_id,))
+            cursor.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+            logger.debug(f"Deleted tag '{tag_name}' as it no longer exists in config")
+
+        conn.commit()
+
+
+def get_tag_id_by_name(tag_name: str) -> Optional[int]:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT id FROM tags WHERE name = ?", (tag_name,))
+        row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def get_all_tags() -> List[Tuple[int, str]]:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT id, name FROM tags")
+        return cursor.fetchall()
+
+
+def get_tags_for_article(article_id: int) -> List[int]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT tag_id FROM article_tags WHERE article_id = ?", (article_id,)
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_all_article_tags() -> List[Tuple[int, str, int]]:
+    """Get all article tags with their associated file names.
+
+    Returns:
+        List of tuples containing (article_id, file_name, tag_id)
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT at.article_id, a.file_name, at.tag_id 
+            FROM article_tags at
+            JOIN article_summaries a ON at.article_id = a.id
+            """
+        )
+        return cursor.fetchall()
+
+
+def get_all_tag_details() -> Dict[int, Dict[str, Any]]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id, name, description, use_summary, any_tags, all_tags, not_any_tags FROM tags"
+        )
+        return {
+            row[0]: {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "use_summary": bool(row[3]),
+                "any_tags": json.loads(row[4]) if row[4] else [],
+                "all_tags": json.loads(row[5]) if row[5] else [],
+                "not_any_tags": json.loads(row[6]) if row[6] else [],
+            }
+            for row in cursor.fetchall()
+        }
+
+
+def set_article_tag(article_id: int, tag_id: int, matches: bool) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO article_tags (article_id, tag_id, matches) VALUES (?, ?, ?)",
+            (article_id, tag_id, 1 if matches else 0),
+        )
+        conn.commit()
+
+
+def remove_orphaned_tags() -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM article_tags)"
+        )
+        conn.commit()
+    return cursor.rowcount
+
+
+# Search Operations
+
+
+def get_articles_by_tag(tag_name: str) -> List[str]:
+    tag_id = get_tag_id_by_name(tag_name)
+    if not tag_id:
+        return []
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT a.file_name FROM article_summaries a JOIN article_tags at ON a.id = at.article_id WHERE at.tag_id = ? AND at.matches = 1",
+            (tag_id,),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_articles_not_matching_tag(tag_name: str) -> List[str]:
+    tag_id = get_tag_id_by_name(tag_name)
+    if not tag_id:
+        return []
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT a.file_name FROM article_summaries a JOIN article_tags at ON a.id = at.article_id WHERE at.tag_id = ? AND at.matches = 0",
+            (tag_id,),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_articles_needing_tagging(
+    max_articles: Optional[int] = None,
+) -> List[Tuple[int, str, str, str]]:
+    # Get all active tags
+    all_tags = get_all_tag_details()
+
+    # If there are no tags, use the original approach
+    if not all_tags:
+        query = """
+            SELECT a.id, a.file_hash, a.file_name, a.summary 
+            FROM article_summaries a
+            WHERE NOT EXISTS (SELECT 1 FROM article_tags WHERE article_id = a.id)
+            AND a.summary IS NOT NULL AND a.summary != ''
+            ORDER BY RANDOM()
+        """
+    else:
+        # Count how many tags each article has and compare to the total number of tags
+        query = """
+            SELECT a.id, a.file_hash, a.file_name, a.summary 
+            FROM article_summaries a
+            WHERE a.summary IS NOT NULL AND a.summary != ''
+            AND (
+                (SELECT COUNT(DISTINCT tag_id) FROM article_tags WHERE article_id = a.id) < ?
+            )
+            ORDER BY RANDOM()
+        """
+
+    if max_articles:
+        query += f" LIMIT {max_articles}"
+
+    with get_connection() as conn:
+        if all_tags:
+            cursor = conn.execute(query, (len(all_tags),))
+        else:
+            cursor = conn.execute(query)
+        return cursor.fetchall()
+
+
+def get_all_tags_with_article_count() -> List[Tuple[int, str, int]]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT t.id, t.name, COUNT(at.article_id) 
+            FROM tags t LEFT JOIN article_tags at ON t.id = at.tag_id AND at.matches = 1 
+            GROUP BY t.id, t.name
+            """
+        )
+        return cursor.fetchall()
+
+
+def get_articles_for_tag(tag_id: int) -> List[Tuple[int, str]]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT a.id, a.file_name FROM article_summaries a JOIN article_tags at ON a.id = at.article_id WHERE at.tag_id = ? AND at.matches = 1",
+            (tag_id,),
+        )
+        return cursor.fetchall()
+
+
+def clean_orphaned_database_items() -> Tuple[int, int]:
+    orphaned_tags = remove_orphaned_tags()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM tag_hashes WHERE tag_id NOT IN (SELECT id FROM tags)"
+        )
+        conn.commit()
+    orphaned_hashes = cursor.rowcount
+    return orphaned_tags, orphaned_hashes
+
+
+def searchArticlesByTags(
+    all_tags=[], any_tags=[], not_any_tags=[], readState="", formats=[]
+):
+    """
+    Search for articles that match specified tags.
+
+    Args:
+        all_tags: List of tags where all must match (AND logic)
+        any_tags: List of tags where any must match (OR logic)
+        not_any_tags: List of tags where none should match (NOT ANY logic)
+        readState: Filter by read state ('read', 'unread', or '') - empty string means no filtering
+        formats: List of file formats to include
+        path: Base path to search in
+
+    Returns:
+        Dict of article paths with their URLs
+    """
+    # Early return conditions
+    is_format_specific = (
+        formats
+        and len(formats) > 0
+        and formats != utils.getConfig()["docFormatsToMove"]
+    )
+    if not all_tags and not any_tags and not not_any_tags and not is_format_specific:
+        return {}
+
+    # Get database path
+    db_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "storage",
+        "article_summaries.db",
+    )
+    if not os.path.exists(db_path):
+        logger.error(f"Tag database not found at {db_path}")
+        return {}
+
+    # Get all article paths that match the format criteria
+    article_paths = utils.getArticlePaths(formats, readState=readState)
+
+    # If no tags specified and only filtering by format, just apply read state filter and return
+    if not all_tags and not any_tags and not not_any_tags:
+        matchingArticles = {
+            articlePath: utils.getUrlOfArticle(articlePath)
+            for articlePath in article_paths
+        }
+        return matchingArticles
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        # Extract filenames from paths for efficient filtering
+        filenames = {os.path.basename(path): path for path in article_paths}
+
+        # Build SQL query for tag filtering
+        query_params = []
+
+        # Base SQL query to get article summaries
+        sql = """
+        SELECT as1.file_name, as1.id 
+        FROM article_summaries as1
+        WHERE as1.file_name IN ({})
+        """.format(
+            ",".join(["?"] * len(filenames))
+        )
+
+        query_params.extend(filenames.keys())
+
+        # Filter by all_tags (AND logic)
+        if all_tags:
+            # For each required tag, join to article_tags and check for match
+            for i, tag in enumerate(all_tags):
+                tag_alias = f"at{i}"
+                tag_join = f"""
+                JOIN article_tags {tag_alias} ON as1.id = {tag_alias}.article_id
+                JOIN tags t{i} ON {tag_alias}.tag_id = t{i}.id AND t{i}.name = ? AND {tag_alias}.matches = 1
+                """
+                sql = sql.replace(
+                    "FROM article_summaries as1",
+                    f"FROM article_summaries as1 {tag_join}",
+                )
+                query_params.append(tag)
+
+        # Filter by any_tags (OR logic)
+        if any_tags:
+            or_conditions = []
+            for tag in any_tags:
+                or_conditions.append("(t_any.name = ? AND at_any.matches = 1)")
+                query_params.append(tag)
+
+            if or_conditions:
+                any_tag_join = """
+                JOIN article_tags at_any ON as1.id = at_any.article_id
+                JOIN tags t_any ON at_any.tag_id = t_any.id
+                """
+                any_tag_where = " AND (" + " OR ".join(or_conditions) + ")"
+
+                # Add the join to the FROM clause
+                sql = sql.replace(
+                    "FROM article_summaries as1",
+                    f"FROM article_summaries as1 {any_tag_join}",
+                )
+                # Add the OR conditions to the WHERE clause
+                sql += any_tag_where
+
+        # Filter by not_any_tags (NOT ANY logic)
+        if not_any_tags:
+            # Create a subquery to exclude articles that have any of the excluded tags
+            not_any_subquery = """
+            NOT EXISTS (
+                SELECT 1 
+                FROM article_tags at_not 
+                JOIN tags t_not ON at_not.tag_id = t_not.id 
+                WHERE as1.id = at_not.article_id 
+                AND at_not.matches = 1 
+                AND t_not.name IN ({})
+            )
+            """.format(
+                ",".join(["?"] * len(not_any_tags))
+            )
+
+            query_params.extend(not_any_tags)
+            sql += " AND " + not_any_subquery
+
+        # Execute query
+        cursor.execute(sql, query_params)
+        matching_files = cursor.fetchall()
+
+        # Build result dictionary
+        matchingArticles = {
+            filenames[filename]: utils.getUrlOfArticle(filenames[filename])
+            for filename, _ in matching_files
+            if filename in filenames
+        }
+        return matchingArticles
+
+    finally:
+        if cursor:
+            cursor.connection.close()
+
+
+def remove_nonexistent_files_from_database(articles_path: Optional[str] = None) -> int:
+    """Remove database entries for files that no longer exist on the filesystem.
+
+    Args:
+        articles_path: Path to the articles directory.
+
+    Returns:
+        int: Number of files removed from the database.
+    """
+    if not articles_path:
+        config = utils.getConfig()
+        articles_path = config.get("articleFileFolder", "")
+        if not articles_path:
+            logger.error("Article file folder not found in config")
+            return 0
+
+    logger.debug(f"Checking for nonexistent files in database from: {articles_path}")
+    existing_files = {os.path.basename(path) for path in utils.getArticlePaths()}
+    removed_count = remove_nonexistent_files(existing_files)
+    if removed_count > 0:
+        logger.info(
+            f"Removed {removed_count} entries for nonexistent files from database"
+        )
+    else:
+        logger.info("No nonexistent files found in database")
+    return removed_count
+
+
+def remove_orphaned_tags_from_database() -> int:
+    """Remove tags from the database that don't have any associated articles.
+
+    Returns:
+        int: Number of orphaned tags removed from the database.
+    """
+    logger.debug("Checking for orphaned tags in database")
+    removed_count = remove_orphaned_tags()
+    if removed_count > 0:
+        logger.info(f"Removed {removed_count} orphaned tags from database")
+    else:
+        logger.info("No orphaned tags found in database")
+    return removed_count
+
+
+def add_files_to_database(articles_path: Optional[str] = None) -> int:
+    """Add all supported files to the database without summarizing.
+
+    Args:
+        articles_path: Path to the articles directory.
+
+    Returns:
+        int: Number of new files added to the database.
+    """
+    if not articles_path:
+        config = utils.getConfig()
+        articles_path = config.get("articleFileFolder", "")
+        if not articles_path:
+            logger.error("Article file folder not found in config")
+            return 0
+
+    logger.debug(f"Adding files to database from: {articles_path}")
+    setup_database()
+    config = utils.getConfig()
+    file_names_to_skip = config.get("fileNamesToSkip", [])
+    existing_hashes = set(get_all_file_hashes())
+    added_count = 0
+    all_article_paths = utils.getArticlePaths()
+    logger.info(f"Found {len(all_article_paths)} files in {articles_path}.")
+
+    for file_path in all_article_paths:
+        file_name = os.path.basename(file_path)
+        if file_name in file_names_to_skip:
+            continue
+        try:
+            file_hash = utils.calculate_normal_hash(file_path)
+            if file_hash in existing_hashes:
+                continue
+            file_ext = os.path.splitext(file_name)[1].lstrip(".")
+            add_file_to_database(file_hash, file_name, file_ext)
+            existing_hashes.add(file_hash)
+            added_count += 1
+            if added_count % 100 == 0:
+                logger.debug(f"Added {added_count} new files to database")
+        except Exception as e:
+            logger.error(f"Error adding file to database: {file_path}: {str(e)}")
+            traceback.print_exc()
+
+    logger.info(f"Added a total of {added_count} new files to database")
+    return added_count
+
+
+// File: /home/pimania/dev/infolio/src/main.py
+import sys
+import cProfile
+import pstats
+import datetime
+from pathlib import Path
+from loguru import logger
+from . import (
+    generateLists,
+    downloadNewArticles,
+    articleSummary,
+    articleTagging,
+    db,
+    utils,
+    manageDocs,
+)
+
+# Configure loguru logger
+logger.remove()
+logger.add(sys.stdout, level="INFO")
+
+# Add file logging to logs/main.log with rotation
+log_file = Path("logs/main.log")
+logger.add(
+    log_file,
+    level="INFO",
+    rotation="10 MB",
+    retention="30 days",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+)
+
+
+def main():
+    ebooks_folder = utils.getConfig()["articleFileFolder"]
+
+    logger.info(f"Starting main.py execution at {datetime.datetime.now()}")
+    logger.info(f"Monitoring directory: {ebooks_folder}")
+
+    # Capture initial directory state
+    initial_snapshot = utils.get_directory_snapshot(ebooks_folder)
+
+    logger.info("remove nonexistent files from database")
+    db.remove_duplicate_file_entries()
+    db.remove_nonexistent_files_from_database()
+    logger.info("remove orphaned tags from database")
+    db.remove_orphaned_tags_from_database()
+    logger.info("calc new urls to add")
+    urlsToAdd = downloadNewArticles.calcUrlsToAdd()
+    allUrls = urlsToAdd["AlreadyRead"] + urlsToAdd["UnRead"]
+    logger.info("download new articles")
+    downloadNewArticles.downloadNewArticles(allUrls)
+    logger.info("give files readable filenames")
+    manageDocs.retitleAllPDFs()
+    logger.info("add files to database")
+    db.add_files_to_database()
+    logger.info("summarize articles")
+    articleSummary.summarize_articles()
+    logger.info("tag articles")
+    articleTagging.tagArticles()
+    logger.info("move docs to target folder")
+    manageDocs.moveDocsToTargetFolder()
+    logger.info("update urlList files")
+    articleTagging.updatePerTagFiles(utils.getConfig()["articleFileFolder"])
+    logger.info("act on requests to delete/hide articles from atVoice app\n\n")
+    logger.info("delete files marked to delete")
+    manageDocs.deleteFilesMarkedToDelete()
+    logger.info("hide articles marked as read")
+    manageDocs.hideArticlesMarkedAsRead()
+    logger.info("mark read bookmarks as read")
+    manageDocs.markArticlesWithUrlsAsRead(
+        downloadNewArticles.calcUrlsToAdd(onlyRead=True)["AlreadyRead"],
+    )
+    logger.info("add file hashes to already added files")
+    manageDocs.addFilesToAlreadyAddedList()
+    logger.info("add read file hashes to marked as read files")
+    manageDocs.addReadFilesToMarkedAsReadList()
+    logger.info("delete duplicate files")
+    manageDocs.deleteDocsWithSameHash()
+    manageDocs.deleteDocsWithSameUrl()
+    logger.info("update alreadyAddedArticles.txt")
+    articleUrls = [url for url in utils.getArticleUrls().values()]
+    utils.addUrlsToUrlFile(
+        articleUrls,
+        utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
+    )
+    logger.info("update @voice lists")
+    generateLists.appendToLists()
+    # generateLists.modifyListFiles()
+
+    # Capture final directory state and log differences
+    final_snapshot = utils.get_directory_snapshot(ebooks_folder)
+    utils.log_directory_diff(initial_snapshot, final_snapshot, "Ebooks Folder")
+
+    logger.info(f"Completed main.py execution at {datetime.datetime.now()}")
+
+
+if __name__ == "__main__":
+    # profiler = cProfile.Profile()
+    # profiler.enable()
+
+    main()
+
+    # profiler.disable()
+    # stats = pstats.Stats(profiler)
+    # stats.sort_stats(pstats.SortKey.CUMULATIVE)
+    # stats.print_stats("src")
+
+
+// File: /home/pimania/dev/infolio/src/manageLists.py
+import os
+import glob
+from . import utils
+from loguru import logger
+
+
+def getArticlesFromList(listName):
+    """
+    Returns a list of article filenames from the .rlst file named `listName`.
+    If listName starts with '_', then any Syncthing conflict files are merged in
+    (only their article lines) and subsequently removed.
+    """
+
+    config_path = utils.getConfig()["atVoiceFolderPath"]
+    listPath = os.path.join(config_path, ".config", listName + ".rlst")
+    rootPath = os.path.join(utils.getConfig()["droidEbooksFolderPath"])
+
+    if not os.path.exists(listPath):
+        return []
+
+    def parse_article_lines(text):
+        """
+        Given the full text of a .rlst file, return (header_text, article_list).
+
+        - header_text is the lines up to the last occurrence of a "\n:" marker
+          (i.e., the "header" region). If no header is detected, returns None.
+        - article_list is the list of extracted article filenames.
+        """
+        text = text.strip()
+        if not text:
+            return None, []
+
+        lines = text.split("\n")
+
+        # Detect a header if there's a second line that starts with ":"
+        if len(lines) > 1 and lines[1].startswith(":"):
+            # Everything up to the last "\n:" is considered the header
+            parts = text.split("\n:")
+            # All parts except the last are the header
+            header_text = "\n:".join(parts[:-1]).rstrip("\n")
+            # The last part is what comes after the final header marker
+            tail = parts[-1].split("\n")
+            # tail[0] is the ":" line, so skip it
+            article_lines = tail[1:]
+        else:
+            # No header found
+            header_text = None
+            article_lines = lines
+
+        # Extract article filenames from article_lines
+        articles = []
+        for line in article_lines:
+            line = line.strip()
+            if not line:
+                continue
+            # The first token (split by tab) holds the path
+            parts = line.split("\t")
+            if parts:
+                if parts[0]:
+                    filePathRelativeToRoot = os.path.relpath(parts[0], rootPath)
+                    if filePathRelativeToRoot not in articles:
+                        articles.append(filePathRelativeToRoot)
+
+        return header_text, articles
+
+    # -------------------------------------------------------
+    # 1. Read and parse main file
+    # -------------------------------------------------------
+    with open(listPath, "r", encoding="utf-8") as f:
+        mainText = f.read()
+
+    mainHeader, mainArticles = parse_article_lines(mainText)
+
+    # -------------------------------------------------------
+    # 2. Check for conflict files only if listName starts with '_'
+    # -------------------------------------------------------
+    conflict_files = []
+    if listName.startswith("_"):
+        logger.info("looking for sync conflict files")
+        baseName = os.path.basename(listPath)
+        extension = os.path.splitext(baseName)[1]
+        fileName = os.path.splitext(baseName)[0]
+        dirName = os.path.dirname(listPath)
+        pattern = fileName + ".sync-conflict-*" + extension
+        conflict_path = os.path.join(dirName, pattern)
+        logger.info(f"Checking for conflict files in: {conflict_path}")
+        conflict_files = glob.glob(conflict_path)
+
+    # -------------------------------------------------------
+    # 3. Merge conflict articles (excluding their headers)
+    # -------------------------------------------------------
+    if conflict_files:
+        logger.info(f"Found {len(conflict_files)} conflict files for {listName}")
+        for cfile in conflict_files:
+            try:
+                with open(cfile, "r", encoding="utf-8") as cf:
+                    ctext = cf.read()
+                # We only take the articles, ignoring conflict headers
+                _, conflictArticles = parse_article_lines(ctext)
+                for article in conflictArticles:
+                    if article not in mainArticles:
+                        mainArticles.append(article)
+            except Exception as e:
+                logger.error(f"Error reading conflict file {cfile}: {e}")
+
+        # -------------------------------------------------------
+        # 4. Rewrite the main file with the merged articles
+        # -------------------------------------------------------
+        if mainHeader is not None:
+            newText = f"{mainHeader}\n:\n" + "\n".join(mainArticles)
+        else:
+            articlesWithRoot = [
+                os.path.join(rootPath, article) for article in mainArticles
+            ]
+            newText = "\n".join(articlesWithRoot)
+
+        try:
+            with open(listPath, "w", encoding="utf-8") as f:
+                f.write(newText)
+
+            # Delete the conflicts
+            for cfile in conflict_files:
+                try:
+                    os.remove(cfile)
+                except Exception as e:
+                    logger.error(f"Error deleting conflict file {cfile}: {e}")
+        except Exception as e:
+            logger.error(f"Error saving merged content to {listPath}: {e}")
+
+    # -------------------------------------------------------
+    # 5. Return final article list
+    # -------------------------------------------------------
+    return mainArticles
+
+
+def createListIfNotExists(listPath):
+    exists = os.path.exists(listPath)
+    if not exists:
+        open(listPath, "a").close()
+    return True
+
+
+def deleteListIfExists(listName):
+    listPath = os.path.join(
+        utils.getConfig()["atVoiceFolderPath"], ".config", listName + ".rlst"
+    )
+    if os.path.exists(listPath):
+        logger.info(f"deleting disabled list: {listName}")
+        os.remove(listPath)
+
+
+def addArticlesToList(listName, articlePathsForList):
+    listPath = os.path.join(
+        utils.getConfig()["atVoiceFolderPath"], ".config", listName + ".rlst"
+    )
+    createListIfNotExists(listPath)
+    articleNamesInList = [
+        os.path.basename(line) for line in getArticlesFromList(listName)
+    ]
+    droidEbooksFolderPath = utils.getConfig()["droidEbooksFolderPath"]
+    articleFileFolder = utils.getConfig()["articleFileFolder"]
+    linesToAppend = []
+    for articlePath in articlePathsForList:
+        articleName = os.path.basename(articlePath)
+        relativeArticlePath = os.path.relpath(articlePath, articleFileFolder)
+        droidArticlePath = os.path.join(droidEbooksFolderPath, relativeArticlePath)
+        if articleName not in articleNamesInList:
+            extension = os.path.splitext(articleName)[1].lstrip(
+                "."
+            )  # Remove leading dot using lstrip
+            extIndicator = {
+                "pdf": "!",
+                "epub": "#",
+                "mobi": "#",
+                "mhtml": "*",
+                "html": "*",
+            }.get(extension, "")
+            displayName = os.path.splitext(articleName)[0]
+            linesToAppend.append(
+                droidArticlePath + "\t" + extIndicator + " " + displayName
+            )
+    newListText = "\n".join(linesToAppend) + "\n" if linesToAppend else ""
+
+    # Read the current list content safely
+    currentListText = ""
+    if os.path.exists(listPath):
+        with open(listPath, "r") as f:
+            currentListText = f.read().strip()
+
+    headers, existingArticleListText = "", ""
+
+    # Handle list format safely, checking for sufficient lines and format
+    if currentListText:
+        lines = currentListText.split("\n")
+        # Check if we have at least 2 lines and the second line starts with ":"
+        if len(lines) > 1 and lines[1].startswith(":"):
+            existingArticleListText = "\n".join(
+                currentListText.split("\n:")[-1].split("\n")[1:]
+            )
+            headers = (
+                currentListText.replace(existingArticleListText, "").strip() + "\n"
+            )
+        else:
+            # Simple format with no headers
+            existingArticleListText = currentListText
+
+    articleList = newListText + existingArticleListText
+    # remove duplicates from existingArticleListText, deleting articles at the top of the list first and while preserving the order
+    deDupedArticleListText = []
+    seen = set()
+    for line in articleList.split("\n"):
+        fileName = os.path.basename(line.split("\t")[0]).lower()
+        if fileName not in seen:
+            seen.add(fileName)
+            deDupedArticleListText.append(line)
+    articleList = "\n".join(deDupedArticleListText)
+
+    combinedListText = headers + articleList
+    if len(linesToAppend) > 0:
+        logger.info(f"Adding the following articles to list: {listName}\n{newListText}")
+
+    if len(linesToAppend) > 0:
+        with open(listPath, "w") as f:
+            f.write(combinedListText)
+
+
+def deleteAllArticlesInList(listName):
+    listPath = os.path.join(
+        utils.getConfig()["atVoiceFolderPath"], ".config", listName + ".rlst"
+    )
+    createListIfNotExists(listPath)
+    currentListText = open(listPath).read().strip()
+
+    textWithArticlesRemoved = ""
+    if "\n:m" not in currentListText:
+        # print(f":m not found in list {listName}")
+        textWithArticlesRemoved = ""
+    else:
+        textWithArticlesRemoved = (
+            "\n:m".join(currentListText.split("\n:m")[:-1])
+            + "\n:m"
+            + currentListText.split("\n:m")[-1].split("\n")[0]
+            + "\n"
+        )  # i.e. currentListText.split("\n:m")[-1].split("\n")[0] refers to the last line in the doc which starts with :m
+
+    with open(listPath, "w") as f:
+        f.write(textWithArticlesRemoved)
+
+
+// File: /home/pimania/dev/infolio/src/manageDocs.py
+import os
+import shutil
+from collections import defaultdict
+from loguru import logger
+from . import utils, manageLists
+import pysnooper
+
+
+def delete_file_with_name(file_name):
+    # Find all files with the file name in the folder using our enhanced function
+    # Delete all found files
+    folder = utils.getConfig()["articleFileFolder"]
+    notFound = True
+    possibleExts = ["pdf", "epub"]
+    currentExt = os.path.splitext(file_name)[1].lstrip(
+        "."
+    )  # Remove leading dot using lstrip
+    possibleExts.append(currentExt)
+    file_name = os.path.basename(file_name)
+    for ext in possibleExts:
+        try:
+            fileName = os.path.splitext(file_name)[0] + "." + ext
+            matching_file = os.path.join(folder, fileName)
+            homeDir = os.path.expanduser("~")
+            dest = os.path.join(
+                homeDir, ".local/share/Trash/files/", "DEL_F_W_N_" + fileName
+            )
+            if os.path.exists(dest):
+                logger.warning(f"File {fileName} already in trash")
+                continue
+            if os.path.exists(matching_file):
+                shutil.move(matching_file, dest)
+                logger.info(f"Deleted {matching_file}")
+                notFound = False
+        except OSError:
+            pass
+    if notFound:
+        logger.warning(
+            f"File {file_name} not found in folder {folder}, with extensions {possibleExts}"
+        )
+
+
+def hide_file_with_name(orgFileName):
+    folder = utils.getConfig()["articleFileFolder"]
+    possibleExts = ["pdf", "epub"]
+    currentExt = os.path.splitext(orgFileName)[1].lstrip(
+        "."
+    )  # Remove leading dot using lstrip
+    orgFileName = os.path.basename(orgFileName)
+    possibleExts.append(currentExt)
+    notFound = True
+    for ext in possibleExts:
+        try:
+            fileName = os.path.splitext(orgFileName)[0] + "." + ext
+            matching_file = os.path.join(folder, fileName)
+            if os.path.exists(matching_file):
+                hiddenFileName = "." + fileName
+                if hiddenFileName == "." or fileName[0] == ".":
+                    continue
+                hiddenFilePath = os.path.join(folder, hiddenFileName)
+                logger.info(f"HIDING {fileName} >> {hiddenFilePath}")
+                shutil.move(matching_file, hiddenFilePath)
+                notFound = False
+                return hiddenFilePath
+        except OSError:
+            pass
+    if notFound:
+        logger.warning(
+            f"File {orgFileName} not found in folder {folder}, with extensions {possibleExts}"
+        )
+    return orgFileName
+
+
+def addFilesToAlreadyAddedList():
+    nonHtmlFormats = [
+        fmt
+        for fmt in utils.getConfig()["docFormatsToMove"]
+        if fmt not in ["html", "mhtml"]
+    ]
+    listFile = utils.getAbsPath("../storage/alreadyAddedArticles.txt")
+    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats)
+    alreadyAddedFileNames = str(utils.getUrlsFromFile(listFile)).lower()
+    fileNames = [
+        os.path.basename(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath).lower() not in alreadyAddedFileNames
+    ]
+    fileHashes = [
+        utils.calculate_normal_hash(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath).lower() not in alreadyAddedFileNames
+    ]
+    itemsToAdd = list(set(fileNames + fileHashes))
+    utils.addUrlsToUrlFile(itemsToAdd, listFile)
+
+
+def addReadFilesToMarkedAsReadList():
+    nonHtmlFormats = [
+        fmt
+        for fmt in utils.getConfig()["docFormatsToMove"]
+        if fmt not in ["html", "mhtml"]
+    ]
+    listFile = utils.getAbsPath("../storage/markedAsReadArticles.txt")
+    matchingArticles = utils.getArticlePaths(formats=nonHtmlFormats, readState="read")
+    alreadyMarkedAsReadFileNames = str(utils.getUrlsFromFile(listFile)).lower()
+    fileNames = [
+        os.path.basename(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath).lower() not in alreadyMarkedAsReadFileNames
+    ]
+    fileHashes = [
+        utils.calculate_normal_hash(filePath)
+        for filePath in matchingArticles
+        if os.path.basename(filePath).lower() not in alreadyMarkedAsReadFileNames
+    ]
+    itemsToAdd = list(set(fileNames + fileHashes))
+    utils.addUrlsToUrlFile(itemsToAdd, listFile)
+
+
+def deleteFilesMarkedToDelete():
+    markedAsDeletedFiles = manageLists.getArticlesFromList("_DELETE")
+    for fileName in markedAsDeletedFiles:
+        delete_file_with_name(fileName)
+    manageLists.deleteAllArticlesInList("_DELETE")
+
+
+def hideArticlesMarkedAsRead():
+    markedAsReadFiles = manageLists.getArticlesFromList("_READ")
+    for fileName in markedAsReadFiles:
+        try:
+            utils.addUrlsToUrlFile(
+                utils.getUrlOfArticle(fileName),
+                utils.getAbsPath("../storage/markedAsReadArticles.txt"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to mark {fileName} as read: {e}")
+        try:
+            hide_file_with_name(fileName)
+        except Exception as e:
+            logger.error(f"Failed to hide {fileName}: {e}")
+    manageLists.deleteAllArticlesInList("_READ")
+
+
+def deleteDocsWithSameHash():
+    urls_to_filenames = utils.getArticleUrls()
+    # Dictionary to store files by URL (since all files are in same directory now)
+    url_to_files = {}
+
+    # Group files by their URLs
+    for fileName in urls_to_filenames:
+        url = urls_to_filenames[fileName]
+        if not url:
+            continue
+        url = utils.formatUrl(url)
+        if "http" not in url:
+            continue
+
+        if url not in url_to_files:
+            url_to_files[url] = []
+        url_to_files[url].append(fileName)
+
+    # Process each URL that has duplicates
+    for url, file_list in url_to_files.items():
+        if len(file_list) > 1:
+            # Separate hidden files (marked as read) from non-hidden files
+            hidden_files = [
+                file_path
+                for file_path in file_list
+                if os.path.basename(file_path).startswith(".")
+            ]
+            non_hidden_files = [
+                file_path
+                for file_path in file_list
+                if not os.path.basename(file_path).startswith(".")
+            ]
+
+            files_to_remove = []
+
+            # Priority: Keep hidden files over non-hidden files
+            if hidden_files:
+                # Keep all hidden files, remove all non-hidden files
+                files_to_remove = non_hidden_files
+                # If multiple hidden files, keep only the last one
+                if len(hidden_files) > 1:
+                    files_to_remove.extend(hidden_files[:-1])
+            else:
+                # No hidden files, keep the last non-hidden file
+                files_to_remove = non_hidden_files[:-1]
+
+            logger.info(
+                f"Duplicate files found for URL {url}:",
+                f"hidden_files: {hidden_files}",
+                f"non_hidden_files: {non_hidden_files}",
+                f"files_to_remove: {files_to_remove}",
+            )
+
+            # Remove the duplicate files
+            for fileName in files_to_remove:
+                logger.warning(f"deleting because duplicate: {fileName} {url}")
+                homeDir = os.path.expanduser("~")
+                dest = os.path.join(
+                    homeDir,
+                    ".local/share/Trash/files/",
+                    "DUP_URL_" + os.path.basename(fileName),
+                )
+                if os.path.exists(dest):
+                    logger.warning(f"File {fileName} already in trash")
+                    continue
+                shutil.move(fileName, dest)
+
+
+def moveDocsToTargetFolder():
+    docPaths = []
+    PDFFolders = utils.getConfig()["pdfSourceFolders"]
+    targetFolder = utils.getConfig()["articleFileFolder"]
+
+    for folderPath in PDFFolders:
+        docPaths += utils.getArticlePaths(folderPath=folderPath)
+
+    logger.info(f"Number of docPaths: {len(docPaths)}")
+
+    alreadyAddedHashes = str(
+        utils.getUrlsFromFile(utils.getAbsPath("../storage/alreadyAddedArticles.txt"))
+    ).lower()
+
+    for docPath in docPaths:
+        docHash = utils.calculate_normal_hash(docPath)
+        docHashIsInAlreadyAdded = docHash.lower() in alreadyAddedHashes
+        docUrl = utils.formatUrl(utils.getUrlOfArticle(docPath))
+        docUrlIsInAlreadyAdded = docUrl.lower() in alreadyAddedHashes
+
+        if docHashIsInAlreadyAdded or docUrlIsInAlreadyAdded:
+            logger.warning(f"Skipping importing duplicate file: {docPath}")
+            docFileName = os.path.basename(docPath)
+            homeDir = os.path.expanduser("~")
+            erroDocPath = os.path.join(
+                homeDir, ".local/share/Trash/files/", "IMPORT_DUPE_" + docFileName
+            )
+            if os.path.exists(erroDocPath):
+                logger.warning(f"File {docPath} already in trash")
+                continue
+            shutil.move(docPath, erroDocPath)
+            continue
+
+        docName = os.path.basename(docPath)
+
+        # Create a unique filename if needed
+        baseName, extension = os.path.splitext(docName)
+        uniqueName = docName
+        counter = 1
+        while os.path.exists(os.path.join(targetFolder, uniqueName)):
+            uniqueName = f"{baseName}_{counter}{extension}"
+            counter += 1
+
+        targetPath = os.path.join(targetFolder, uniqueName)
+
+        logger.info(f"Moving {docName} to {targetPath} derived from {docPath}")
+        shutil.move(docPath, targetPath)
+
+        utils.addUrlsToUrlFile(
+            [docHash, docUrl, os.path.basename(targetPath)],
+            utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
+        )
+
+
+def deleteDocsWithSameUrl():
+    directory_path = utils.getConfig()["articleFileFolder"]
+    duplicate_size_files = defaultdict(list)
+
+    for filename in os.listdir(directory_path):
+        full_path = os.path.join(directory_path, filename)
+
+        # Skip if not a file
+        if not os.path.isfile(full_path):
+            continue
+
+        file_size = os.path.getsize(full_path)
+        file_hash = utils.calculate_normal_hash(full_path)
+
+        unique_key = f"{file_size}_{file_hash}"
+
+        duplicate_size_files[unique_key].append(full_path)
+
+    for unique_key, file_paths in duplicate_size_files.items():
+        if len(file_paths) > 1:
+            # Separate hidden files (marked as read) from non-hidden files
+            hidden_files = [
+                path for path in file_paths if os.path.basename(path)[0] == "."
+            ]
+            non_hidden_files = [
+                path for path in file_paths if os.path.basename(path)[0] != "."
+            ]
+
+            files_to_remove = []
+
+            # Priority: Keep hidden files over non-hidden files
+            # Delete all non-hidden files if we have hidden files, otherwise keep one non-hidden file
+            if hidden_files:
+                # Keep all hidden files, remove all non-hidden files
+                files_to_remove = non_hidden_files
+                # If multiple hidden files, keep only one
+                if len(hidden_files) > 1:
+                    files_to_remove.extend(hidden_files[:-1])
+            else:
+                # No hidden files, keep one non-hidden file
+                files_to_remove = non_hidden_files[:-1]
+
+            logger.info(
+                f"Duplicate files found for key {unique_key}:",
+                f"hidden_files: {hidden_files}",
+                f"non_hidden_files: {non_hidden_files}",
+                f"files_to_remove: {files_to_remove}",
+            )
+
+            for file_path in files_to_remove:
+                logger.info(f"removed: {file_path}")
+                homeDir = os.path.expanduser("~")
+                dest = os.path.join(
+                    homeDir,
+                    ".local/share/Trash/files/",
+                    "DUP_HASH_" + os.path.basename(file_path),
+                )
+                if os.path.exists(dest):
+                    logger.warning(f"File {file_path} already in trash")
+                    continue
+                shutil.move(file_path, dest)
+
+
+def markArticlesWithUrlsAsRead(readUrls):
+    articleUrls = utils.getArticleUrls()
+    articleUrls = {v: k for k, v in articleUrls.items()}
+    for url in readUrls:
+        if url in articleUrls:
+            try:
+                hide_file_with_name(os.path.basename(articleUrls[url]))
+            except OSError:
+                logger.error(f"Error hiding {articleUrls[url]}")
+        utils.addUrlsToUrlFile(
+            url, utils.getAbsPath("../storage/markedAsReadArticles.txt")
+        )
+
+
+def getPDFTitle(pdfPath):
+    pdfTitle = ""
+    originalFileName = os.path.basename(pdfPath)
+    pdfTitle = os.popen('pdftitle -p "' + pdfPath + '"').read()
+    if (not pdfTitle) or len(pdfTitle) < 4:
+        pdfTitle = originalFileName[:-4]
+        idType = utils.get_id_type(pdfTitle)
+        if idType == "arxiv":
+            pdfTitle = utils.getArxivTitle(pdfTitle)
+        elif idType == "doi":
+            pdfTitle = utils.getDOITitle(pdfTitle)
+    else:
+        pdfTitle = pdfTitle.strip()
+
+    pdfTitle = pdfTitle[:50]
+
+    pdfTitle += ".pdf"
+
+    pdfTitle = utils.removeIllegalChars(pdfTitle)
+    return pdfTitle
+
+
+def reTitlePDF(pdfPath):
+    pdfTitle = getPDFTitle(pdfPath)
+    newPath = os.path.join(os.path.dirname(pdfPath), pdfTitle)
+    logger.info(f"Renaming PDF: {pdfPath} -> {newPath}")
+    return newPath
+
+
+def retitlePDFsInFolder(folderPath):
+    pdfPaths = utils.getArticlePaths(["pdf"], folderPath)
+    newPdfPaths = []
+    for pdfPath in pdfPaths:
+        newPath = reTitlePDF(pdfPath).lstrip(".")
+        suffix = 1
+        base, ext = os.path.splitext(newPath)
+        while newPath in newPdfPaths or os.path.exists(newPath):
+            newPath = f"{base}_{suffix}{ext}"
+            suffix += 1
+        newPdfPaths.append(newPath)
+        os.rename(pdfPath, newPath)
+
+
+def retitleAllPDFs():
+    PDFFolders = utils.getConfig()["pdfSourceFolders"]
+    for folderPath in PDFFolders:
+        retitlePDFsInFolder(folderPath)

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse
 from loguru import logger
+import requests
 
 # import snscrape.modules.twitter as sntwitter
 # import snscrape
@@ -118,7 +119,7 @@ def addUrlsToUrlFile(urlOrUrls, urlFile, overwrite=False):
 
 
 def getTwitterAccountFromTweet(tweet_id):
-    return "NO USERNAME FOUND"
+    return None
 
 
 #     # Create a TwitterTweetScraper object for the given tweet_id
@@ -436,7 +437,7 @@ def log_directory_diff(before_snapshot, after_snapshot, directory_name):
 
 
 def removeIllegalChars(pdfTitle):
-    illegalChars = utils.getConfig()["illegalFileNameChars"]
+    illegalChars = getConfig()["illegalFileNameChars"]
     for char in illegalChars:
         pdfTitle = pdfTitle.replace(char, "")
 

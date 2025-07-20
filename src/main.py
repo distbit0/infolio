@@ -74,8 +74,8 @@ def main():
     logger.info("add read file hashes to marked as read files")
     manageDocs.addReadFilesToMarkedAsReadList()
     logger.info("delete duplicate files")
-    manageDocs.deleteDuplicateArticleFiles()
-    manageDocs.deleteDuplicateFiles()
+    manageDocs.deleteDocsWithSameHash()
+    manageDocs.deleteDocsWithSameUrl()
     logger.info("update alreadyAddedArticles.txt")
     articleUrls = [url for url in utils.getArticleUrls().values()]
     utils.addUrlsToUrlFile(

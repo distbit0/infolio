@@ -171,6 +171,7 @@ def addArticlesToList(listName, articlePathsForList):
             extIndicator = {
                 "pdf": "!",
                 "epub": "#",
+                "mobi": "#",
                 "mhtml": "*",
                 "html": "*",
             }.get(extension, "")

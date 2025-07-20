@@ -25,9 +25,8 @@ def delete_file_with_name(file_name):
             dest = os.path.join(
                 homeDir, ".local/share/Trash/files/", "DEL_F_W_N_" + fileName
             )
-            if os.path.exists(dest):
-                logger.warning(f"File {fileName} already in trash")
-                continue
+            while os.path.exists(dest):
+                dest = dest + "_" + str(random.randint(0, 10000))
             if os.path.exists(matching_file):
                 shutil.move(matching_file, dest)
                 logger.info(f"Deleted {matching_file}")
@@ -129,7 +128,9 @@ def hideArticlesMarkedAsRead():
     for fileName in markedAsReadFiles:
         try:
             utils.addUrlsToUrlFile(
-                utils.getUrlOfArticle(fileName),
+                utils.getUrlOfArticle(
+                    os.path.join(utils.getConfig()["articleFileFolder"], fileName)
+                ),
                 utils.getAbsPath("../storage/markedAsReadArticles.txt"),
             )
         except Exception as e:
@@ -141,7 +142,7 @@ def hideArticlesMarkedAsRead():
     manageLists.deleteAllArticlesInList("_READ")
 
 
-def deleteDuplicateArticleFiles():
+def deleteDocsWithSameHash():
     urls_to_filenames = utils.getArticleUrls()
     # Dictionary to store files by URL (since all files are in same directory now)
     url_to_files = {}
@@ -263,7 +264,7 @@ def moveDocsToTargetFolder():
         )
 
 
-def deleteDuplicateFiles():
+def deleteDocsWithSameUrl():
     directory_path = utils.getConfig()["articleFileFolder"]
     duplicate_size_files = defaultdict(list)
 

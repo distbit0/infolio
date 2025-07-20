@@ -313,11 +313,7 @@ class ArticleTagger:
                     not_any_tags=tag.get("not_any_tags"),
                 )
                 logger.info(
-                    "Tag",
-                    tag["name"],
-                    "has",
-                    len(articlesMatchingTag),
-                    "potential articles",
+                    f"Tag {tag['name']} has {len(articlesMatchingTag)} potential articles"
                 )
                 self.tag_article_match_cache[tag["id"]] = [
                     os.path.basename(fileName).lower()
