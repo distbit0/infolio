@@ -1,28 +1,29 @@
 import os
 import shutil
-import requests
-import re
 from collections import defaultdict
-import sys
 from loguru import logger
 from . import utils, manageLists
 
 
-def delete_file_with_name(file_name, folder):
+def delete_file_with_name(file_name):
     # Find all files with the file name in the folder using our enhanced function
     # Delete all found files
-    # print(f"Deleting {file_name} from {folder}")
+    folder = utils.getConfig()["articleFileFolder"]
     notFound = True
     possibleExts = ["pdf", "epub"]
-    currentExt = file_name.split(".")[-1]
+    currentExt = os.path.splitext(file_name)[1].lstrip(
+        "."
+    )  # Remove leading dot using lstrip
     possibleExts.append(currentExt)
     file_name = os.path.basename(file_name)
     for ext in possibleExts:
         try:
-            fileName = ".".join(file_name.split(".")[:-1]) + "." + ext
+            fileName = os.path.splitext(file_name)[0] + "." + ext
             matching_file = os.path.join(folder, fileName)
             homeDir = os.path.expanduser("~")
-            dest = os.path.join(homeDir, ".local/share/Trash/files/", fileName)
+            dest = os.path.join(
+                homeDir, ".local/share/Trash/files/", "DEL_F_W_N_" + fileName
+            )
             if os.path.exists(dest):
                 logger.warning(f"File {fileName} already in trash")
                 continue
@@ -38,15 +39,18 @@ def delete_file_with_name(file_name, folder):
         )
 
 
-def hide_file_with_name(orgFileName, folder):
+def hide_file_with_name(orgFileName):
+    folder = utils.getConfig()["articleFileFolder"]
     possibleExts = ["pdf", "epub"]
-    currentExt = orgFileName.split(".")[-1]
+    currentExt = os.path.splitext(orgFileName)[1].lstrip(
+        "."
+    )  # Remove leading dot using lstrip
     orgFileName = os.path.basename(orgFileName)
     possibleExts.append(currentExt)
     notFound = True
     for ext in possibleExts:
         try:
-            fileName = ".".join(orgFileName.split(".")[:-1]) + "." + ext
+            fileName = os.path.splitext(orgFileName)[0] + "." + ext
             matching_file = os.path.join(folder, fileName)
             if os.path.exists(matching_file):
                 hiddenFileName = "." + fileName
@@ -116,17 +120,15 @@ def addReadFilesHashesToMarkedAsRead():
 
 def deleteFilesMarkedToDelete():
     markedAsDeletedFiles = manageLists.getArticlesFromList("_DELETE")
-    articleFileFolder = utils.getConfig()["articleFileFolder"]
     for fileName in markedAsDeletedFiles:
-        delete_file_with_name(fileName, articleFileFolder)
+        delete_file_with_name(fileName)
     manageLists.deleteAllArticlesInList("_DELETE")
 
 
 def hideArticlesMarkedAsRead():
     markedAsReadFiles = manageLists.getArticlesFromList("_READ")
-    articleFileFolder = utils.getConfig()["articleFileFolder"]
     for fileName in markedAsReadFiles:
-        newPath = hide_file_with_name(fileName, articleFileFolder)
+        newPath = hide_file_with_name(fileName)
         if newPath:
             try:
                 utils.addUrlsToUrlFile(
@@ -138,10 +140,12 @@ def hideArticlesMarkedAsRead():
     manageLists.deleteAllArticlesInList("_READ")
 
 
-def deleteDuplicateArticleFiles(urls_to_filenames):
-    # Dictionary to store seen URLs in each directory
-    dir_seen_urls = {}
+def deleteDuplicateArticleFiles():
+    urls_to_filenames = utils.getArticleUrls()
+    # Dictionary to store files by URL (since all files are in same directory now)
+    url_to_files = {}
 
+    # Group files by their URLs
     for fileName in urls_to_filenames:
         url = urls_to_filenames[fileName]
         if not url:
@@ -150,26 +154,58 @@ def deleteDuplicateArticleFiles(urls_to_filenames):
         if "http" not in url:
             continue
 
-        # Get directory of the file
-        directory = os.path.dirname(fileName)
+        if url not in url_to_files:
+            url_to_files[url] = []
+        url_to_files[url].append(fileName)
 
-        if directory not in dir_seen_urls:
-            # If directory is not in the dictionary, add it with the current url
-            dir_seen_urls[directory] = {url}
-        elif url in dir_seen_urls[directory] and url:
-            # If url has been seen in this directory, delete the file
-            logger.info(f"deleting because duplicate: {fileName} {url}")
-            homeDir = os.path.expanduser("~")
-            dest = os.path.join(
-                homeDir, ".local/share/Trash/files/", "DUP_" + fileName.split("/")[-1]
+    # Process each URL that has duplicates
+    for url, file_list in url_to_files.items():
+        if len(file_list) > 1:
+            # Separate hidden files (marked as read) from non-hidden files
+            hidden_files = [
+                file_path
+                for file_path in file_list
+                if os.path.basename(file_path).startswith(".")
+            ]
+            non_hidden_files = [
+                file_path
+                for file_path in file_list
+                if not os.path.basename(file_path).startswith(".")
+            ]
+
+            files_to_remove = []
+
+            # Priority: Keep hidden files over non-hidden files
+            if hidden_files:
+                # Keep all hidden files, remove all non-hidden files
+                files_to_remove = non_hidden_files
+                # If multiple hidden files, keep only the last one
+                if len(hidden_files) > 1:
+                    files_to_remove.extend(hidden_files[:-1])
+            else:
+                # No hidden files, keep the last non-hidden file
+                files_to_remove = non_hidden_files[:-1]
+
+            logger.info(
+                f"Duplicate files found for URL {url}:",
+                f"hidden_files: {hidden_files}",
+                f"non_hidden_files: {non_hidden_files}",
+                f"files_to_remove: {files_to_remove}",
             )
-            if os.path.exists(dest):
-                logger.info(f"File {fileName} already in trash")
-                continue
-            shutil.move(fileName, dest)
-        else:
-            # If url has not been seen in this directory, add it to the set
-            dir_seen_urls[directory].add(url)
+
+            # Remove the duplicate files
+            for fileName in files_to_remove:
+                logger.warning(f"deleting because duplicate: {fileName} {url}")
+                homeDir = os.path.expanduser("~")
+                dest = os.path.join(
+                    homeDir,
+                    ".local/share/Trash/files/",
+                    "DUP_URL_" + os.path.basename(fileName),
+                )
+                if os.path.exists(dest):
+                    logger.warning(f"File {fileName} already in trash")
+                    continue
+                shutil.move(fileName, dest)
 
 
 def moveDocsToTargetFolder():
@@ -192,19 +228,19 @@ def moveDocsToTargetFolder():
     for docPath in docPaths:
         docHash = utils.calculate_normal_hash(docPath)
         if docHash in alreadyAddedHashes:
-            logger.info(f"Skipping importing duplicate file: {docPath}")
-            docFileName = docPath.split("/")[-1]
+            logger.warning(f"Skipping importing duplicate file: {docPath}")
+            docFileName = os.path.basename(docPath)
             homeDir = os.path.expanduser("~")
             erroDocPath = os.path.join(
                 homeDir, ".local/share/Trash/files/", "DUPLICATE_" + docFileName
             )
             if os.path.exists(erroDocPath):
-                logger.info(f"File {docPath} already in trash")
+                logger.warning(f"File {docPath} already in trash")
                 continue
             shutil.move(docPath, erroDocPath)
             continue
 
-        docName = docPath.split("/")[-1]
+        docName = os.path.basename(docPath)
 
         # Create a unique filename if needed
         baseName, extension = os.path.splitext(docName)
@@ -229,10 +265,10 @@ def moveDocsToTargetFolder():
         )
 
 
-def deleteDuplicateFiles(directory_path):
+def deleteDuplicateFiles():
+    directory_path = utils.getConfig()["articleFileFolder"]
     duplicate_size_files = defaultdict(list)
 
-    # Since all files are in root directory, use os.listdir instead of os.walk
     for filename in os.listdir(directory_path):
         full_path = os.path.join(directory_path, filename)
 
@@ -242,7 +278,7 @@ def deleteDuplicateFiles(directory_path):
 
         file_size = os.path.getsize(full_path)
         file_hash = utils.calculate_normal_hash(full_path)
-        # Simplified unique_key without root directory component
+
         unique_key = f"{file_size}_{file_hash}"
 
         duplicate_size_files[unique_key].append(full_path)
@@ -282,10 +318,12 @@ def deleteDuplicateFiles(directory_path):
                 logger.info(f"removed: {file_path}")
                 homeDir = os.path.expanduser("~")
                 dest = os.path.join(
-                    homeDir, ".local/share/Trash/files/", os.path.basename(file_path)
+                    homeDir,
+                    ".local/share/Trash/files/",
+                    "DUP_HASH_" + os.path.basename(file_path),
                 )
                 if os.path.exists(dest):
-                    logger.info(f"File {file_path} already in trash")
+                    logger.warning(f"File {file_path} already in trash")
                     continue
                 shutil.move(file_path, dest)
 
@@ -296,10 +334,7 @@ def markArticlesWithUrlsAsRead(readUrls):
     for url in readUrls:
         if url in articleUrls:
             try:
-                hide_file_with_name(
-                    os.path.basename(articleUrls[url]),
-                    utils.getConfig()["articleFileFolder"],
-                )
+                hide_file_with_name(os.path.basename(articleUrls[url]))
             except OSError:
                 logger.error(f"Error hiding {articleUrls[url]}")
         utils.addUrlsToUrlFile(
@@ -309,7 +344,7 @@ def markArticlesWithUrlsAsRead(readUrls):
 
 def getPDFTitle(pdfPath):
     pdfTitle = ""
-    originalFileName = pdfPath.split("/")[-1]
+    originalFileName = os.path.basename(pdfPath)
     pdfTitle = os.popen('pdftitle -p "' + pdfPath + '"').read()
     if (not pdfTitle) or len(pdfTitle) < 4:
         pdfTitle = originalFileName[:-4]
@@ -331,7 +366,7 @@ def getPDFTitle(pdfPath):
 
 def reTitlePDF(pdfPath):
     pdfTitle = getPDFTitle(pdfPath)
-    newPath = "/".join(pdfPath.split("/")[:-1]) + "/" + pdfTitle
+    newPath = os.path.join(os.path.dirname(pdfPath), pdfTitle)
     logger.info(f"Renaming PDF: {pdfPath} -> {newPath}")
     return newPath
 

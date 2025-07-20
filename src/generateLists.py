@@ -357,7 +357,7 @@ def appendToLists():
                 base_name = os.path.basename(str(path))
                 extension = os.path.splitext(base_name)[1]
                 if extension == ".pdf":
-                    fileName_stem = base_name.rsplit(".", 1)[0]
+                    fileName_stem = os.path.splitext(base_name)[0]
                     fileName = fileName_stem + ".epub"
                     filePath = os.path.join(epub_dir, fileName)
                     convertedPaths.append(filePath)
@@ -519,7 +519,7 @@ def modifyListFiles():
     """Processes files (referenced by full paths) in lists: PDF->EPUB conversion, HTML prefixing."""
     config = utils.getConfig()
     listToTagMappings = config.get("listToTagMappings", {})
-    article_dir = Path(config.get("articleFileFolder", "."))  # Base directory
+    article_dir = Path(config.get("articleFileFolder", "."))
     epub_dir = article_dir / EPUB_SUBDIR
     prefixed_dir = article_dir / PREFIXED_SUBDIR
     epub_dir.mkdir(parents=True, exist_ok=True)

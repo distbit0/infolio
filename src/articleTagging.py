@@ -132,9 +132,6 @@ class TagEvaluator:
 
                 logger.debug(f"Tag evaluation result: {match_result}")
 
-                if tag["id"] == 487 and match_result == True:
-                    logger.info("\n\n\n", user_prompt, results)
-
                 return results
             except json.JSONDecodeError as e:
                 retry_count += 1
@@ -667,7 +664,7 @@ def updatePerTagFiles(root_folder):
                         )[0]
                         urls_with_titles.append((article_url, title_display))
             except Exception as e:
-                logger.info(f"Error processing {file_name}: {e}")
+                logger.error(f"Error processing {file_name}: {e}")
 
         # Sanitize tag name for file system
         safe_tag_name = re.sub(r"[^\w\-_\.]", "_", tag_name)

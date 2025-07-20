@@ -7,6 +7,8 @@ import glob
 import urlexpander
 import json
 import os
+from pathlib import Path
+from urllib.parse import urlparse
 from loguru import logger
 
 # import snscrape.modules.twitter as sntwitter
@@ -60,7 +62,9 @@ def formatUrl(url):
 
 def getUrlOfArticle(articleFilePath):
     extractedUrl = ""
-    articleExtension = articleFilePath.split(".")[-1].lower()
+    articleExtension = os.path.splitext(articleFilePath)[1][
+        1:
+    ].lower()  # Remove leading dot
 
     if articleExtension not in ["txt", "html", "mhtml"]:
         return ""
@@ -231,8 +235,10 @@ def getConfig():
 
 
 def doesPathContainDotFolders(input_path):
-    for folder in input_path.split("/")[:-1]:
-        if folder and folder[0] == ".":
+    path_obj = Path(input_path)
+    # Check all parent directories (excluding the file itself)
+    for part in path_obj.parent.parts:
+        if part and part.startswith("."):
             return True
     return False
 

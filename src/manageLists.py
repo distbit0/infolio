@@ -154,23 +154,27 @@ def addArticlesToList(listName, articlePathsForList):
         utils.getConfig()["atVoiceFolderPath"], ".config", listName + ".rlst"
     )
     createListIfNotExists(listPath)
-    articleNamesInList = [line.split("/")[-1] for line in getArticlesFromList(listName)]
+    articleNamesInList = [
+        os.path.basename(line) for line in getArticlesFromList(listName)
+    ]
     droidEbooksFolderPath = utils.getConfig()["droidEbooksFolderPath"]
     articleFileFolder = utils.getConfig()["articleFileFolder"]
     linesToAppend = []
     for articlePath in articlePathsForList:
-        articleName = articlePath.split("/")[-1]
+        articleName = os.path.basename(articlePath)
         relativeArticlePath = os.path.relpath(articlePath, articleFileFolder)
         droidArticlePath = os.path.join(droidEbooksFolderPath, relativeArticlePath)
         if articleName not in articleNamesInList:
-            extension = articleName.split(".")[-1]
+            extension = os.path.splitext(articleName)[1].lstrip(
+                "."
+            )  # Remove leading dot using lstrip
             extIndicator = {
                 "pdf": "[p]",
                 "epub": "[e]",
                 "mhtml": "[h]",
                 "html": "[h]",
             }.get(extension, "")
-            displayName = ".".join(articleName.split(".")[:-1])
+            displayName = os.path.splitext(articleName)[0]
             linesToAppend.append(
                 droidArticlePath + "\t" + extIndicator + " " + displayName
             )
@@ -204,7 +208,7 @@ def addArticlesToList(listName, articlePathsForList):
     deDupedArticleListText = []
     seen = set()
     for line in articleList.split("\n"):
-        fileName = line.split("\t")[0].split("/")[-1].lower()
+        fileName = os.path.basename(line.split("\t")[0]).lower()
         if fileName not in seen:
             seen.add(fileName)
             deDupedArticleListText.append(line)

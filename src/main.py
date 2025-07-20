@@ -74,11 +74,10 @@ def main():
     logger.info("add read file hashes to marked as read files")
     manageDocs.addReadFilesHashesToMarkedAsRead()
     logger.info("delete duplicate files")
-    articles = utils.getArticleUrls()
-    articleUrls = [url for url in articles.values()]
-    manageDocs.deleteDuplicateArticleFiles(articles)
-    manageDocs.deleteDuplicateFiles(utils.getConfig()["articleFileFolder"])
+    manageDocs.deleteDuplicateArticleFiles()
+    manageDocs.deleteDuplicateFiles()
     logger.info("update alreadyAddedArticles.txt")
+    articleUrls = [url for url in utils.getArticleUrls().values()]
     utils.addUrlsToUrlFile(
         articleUrls,
         utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
