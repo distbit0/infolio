@@ -56,31 +56,12 @@
             "description": "about any of the following:\nprediction markets\ninformation markets\nidea markets\nfutarchy\nintelligence marketplaces\ninformation elicitation incentive mechanisms to improve human cognition, improve decision making or improve information quality\napplications of ai agents to crypto\nnovell crypto capital allocation mechanisms\ngovernance incentives",
             "use_summary": true
         },
-        "impLossAndLVR": {
-            "description": "About AMM/DEX impermanent loss, loss versus rebalancing (LVR) and potential mitigations",
-            "use_summary": true
-        },
-        "futarchy": {
-            "any_tags": [
-                "infofi"
-            ],
-            "description": "About futarchy or decision markets",
-            "use_summary": true
-        },
         "epistech": {
             "description": "about using technology to improve epistemics, decision making, knowledge acquisition, truth discovery etc. e.g. via knowledge graphs, incentives or any other mechanism. not including mathematical ML journal papers",
             "use_summary": true
         },
-        "creativity": {
-            "description": "about how to formalise or otherwise better understand what constitutes creativity, novelty, knowledge or open endedness",
-            "use_summary": true
-        },
-        "convoStarters": {
-            "description": "about good questions which you can ask in conversations, or other settings",
-            "use_summary": true
-        },
-        "community growth": {
-            "description": "defi trader community building growth strategies",
+        "mech design": {
+            "description": "about novel incentive mechanism design ideas including anything related to public goods, cryptoeconomics, auctions, game theory, etc.",
             "use_summary": true
         }
     },
@@ -89,6 +70,7 @@
             "all_tags": [],
             "formats": [
                 "epub",
+                "mobi",
                 "html",
                 "mhtml"
             ],
@@ -96,20 +78,10 @@
                 "infofi"
             ]
         },
-        "lvr": {
-            "formats": [
-                "epub",
-                "html",
-                "mhtml"
-            ],
-            "all_tags": [],
-            "any_tags": [
-                "impLossAndLVR"
-            ]
-        },
         "epistech": {
             "formats": [
                 "epub",
+                "mobi",
                 "html",
                 "mhtml"
             ],
@@ -118,29 +90,17 @@
                 "epistech"
             ]
         },
-        "instofailures": {
-            "all_tags": [],
-            "any_tags": [
-                "instofailures"
-            ]
-        },
-        "creativity": {
+        "mech design": {
             "formats": [
                 "epub",
+                "mobi",
                 "html",
                 "mhtml"
             ],
             "all_tags": [],
             "any_tags": [
-                "creativity"
+                "mech design"
             ]
-        },
-        "convoStarters": {
-            "all_tags": [],
-            "any_tags": [
-                "convoStarters"
-            ],
-            "readState": ""
         }
     }
 }
