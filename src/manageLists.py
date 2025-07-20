@@ -169,10 +169,10 @@ def addArticlesToList(listName, articlePathsForList):
                 "."
             )  # Remove leading dot using lstrip
             extIndicator = {
-                "pdf": "[p]",
-                "epub": "[e]",
-                "mhtml": "[h]",
-                "html": "[h]",
+                "pdf": "!",
+                "epub": "#",
+                "mhtml": "*",
+                "html": "*",
             }.get(extension, "")
             displayName = os.path.splitext(articleName)[0]
             linesToAppend.append(
