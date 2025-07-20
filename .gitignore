@@ -18,3 +18,4 @@ log/*
 
 .venv/*
 
+**/dump*.txt
