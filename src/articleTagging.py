@@ -494,6 +494,10 @@ def analyze_tag_results(tag_name: str) -> None:
     for file_name in matching_articles:
         filePath = os.path.join(utils.getConfig()["articleFileFolder"], file_name)
         # For HTML and MHTML files, try to get the URL
+        print(f"Checking {file_name}")
+        print(file_name.lower().endswith((".html", ".mhtml")))
+        print(os.path.exists(filePath))
+        print(filePath)
         if file_name.lower().endswith((".html", ".mhtml")) and os.path.exists(filePath):
             url = utils.getUrlOfArticle(filePath)
             if url:
@@ -501,7 +505,9 @@ def analyze_tag_results(tag_name: str) -> None:
                     matching_read_urls.append(url)
                 else:
                     matching_unread_urls.append(url)
-                continue
+            else:
+                print(f"No URL found for {file_name}")
+            continue
         # If no URL found or not an HTML/MHTML file, add to files list
         matching_files.append(file_name)
 

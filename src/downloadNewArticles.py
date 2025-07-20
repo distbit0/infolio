@@ -101,13 +101,6 @@ def downloadNewArticles(urlsToAdd):
             save_mobile_article_as_mhtml(url, saveDirectory)
         except Exception as e:
             logger.error(f"Error downloading article: {url} {e}")
-        else:
-            utils.addUrlsToUrlFile(
-                [utils.formatUrl(urlCopy)],
-                utils.getAbsPath("../storage/alreadyAddedArticles.txt"),
-            )
-
-    # Add downloaded URLs to alreadyAddedArticles.txt
 
 
 def save_webpage_as_mhtml(url, timeout=10, min_load_time=5):

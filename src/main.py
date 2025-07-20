@@ -37,7 +37,6 @@ def main():
 
     # Capture initial directory state
     initial_snapshot = utils.get_directory_snapshot(ebooks_folder)
-
     logger.info("remove nonexistent files from database")
     db.remove_duplicate_file_entries()
     db.remove_nonexistent_files_from_database()
@@ -50,14 +49,14 @@ def main():
     downloadNewArticles.downloadNewArticles(allUrls)
     logger.info("give files readable filenames")
     manageDocs.retitleAllPDFs()
+    logger.info("move docs to target folder")
+    manageDocs.moveDocsToTargetFolder()
     logger.info("add files to database")
     db.add_files_to_database()
     logger.info("summarize articles")
     articleSummary.summarize_articles()
     logger.info("tag articles")
     articleTagging.tagArticles()
-    logger.info("move docs to target folder")
-    manageDocs.moveDocsToTargetFolder()
     logger.info("update urlList files")
     articleTagging.updatePerTagFiles(utils.getConfig()["articleFileFolder"])
     logger.info("act on requests to delete/hide articles from atVoice app\n\n")

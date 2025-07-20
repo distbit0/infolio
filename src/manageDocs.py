@@ -197,7 +197,9 @@ def deleteDocsWithSameHash():
 
             # Remove the duplicate files
             for fileName in files_to_remove:
-                logger.warning(f"deleting because duplicate: {fileName} {url}")
+                logger.warning(
+                    f"deleting because duplicate: {fileName} {url} (Duplicate with {url_to_files[url]})"
+                )
                 homeDir = os.path.expanduser("~")
                 dest = os.path.join(
                     homeDir,
@@ -231,7 +233,9 @@ def moveDocsToTargetFolder():
         docUrlIsInAlreadyAdded = docUrl.lower() in alreadyAddedHashes
 
         if docHashIsInAlreadyAdded or docUrlIsInAlreadyAdded:
-            logger.warning(f"Skipping importing duplicate file: {docPath}")
+            logger.warning(
+                f"Skipping importing duplicate file: {docPath}, {docHash}, {docUrl}, {docHashIsInAlreadyAdded}, {docUrlIsInAlreadyAdded}"
+            )
             docFileName = os.path.basename(docPath)
             homeDir = os.path.expanduser("~")
             erroDocPath = os.path.join(
