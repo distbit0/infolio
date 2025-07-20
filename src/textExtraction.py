@@ -4,9 +4,7 @@ import tempfile
 import subprocess
 import traceback
 from typing import List, Tuple, Optional
-from pathlib import Path
 from loguru import logger
-import sys
 from . import utils
 import ebooklib
 from ebooklib import epub
