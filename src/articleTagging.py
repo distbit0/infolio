@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import traceback
@@ -583,7 +584,7 @@ def updatePerTagFiles(root_folder):
     db.setup_database()
 
     # Get the tag files directory from config
-    tag_files_dir = getConfig()["backupFolderPath"]
+    tag_files_dir = utils.getConfig()["backupFolderPath"]
     os.makedirs(tag_files_dir, exist_ok=True)
 
     # Load existing hash data from all JSON files to avoid recalculating hashes

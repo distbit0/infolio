@@ -1,4 +1,5 @@
 import os
+import webbrowser
 import ssl
 import time
 import json
@@ -12,8 +13,13 @@ from urllib.parse import urlparse
 import markdown
 from loguru import logger
 from . import utils
+import sys
+import pysnooper
 
 requests.packages.urllib3.disable_warnings()
+
+sys.path.append(utils.getConfig()["convertLinksDir"])
+from convertLinks import main as convertLinks
 
 
 def calcUrlsToAdd(onlyRead=False):
@@ -149,6 +155,8 @@ def save_mobile_article_as_mhtml(url, saveDirectory, timeout=10, min_load_time=5
         url = url.replace("https", "http")
         response = requests.get(url, verify=False, timeout=timeout)
     if response.status_code != 200:
+
+        webbrowser.open(url)
         raise Exception(f"Failed to download {url}, status code {response.status_code}")
 
     content_type = response.headers.get("Content-Type")

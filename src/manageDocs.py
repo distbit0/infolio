@@ -3,6 +3,7 @@ import shutil
 from collections import defaultdict
 from loguru import logger
 from . import utils, manageLists
+import pysnooper
 
 
 def delete_file_with_name(file_name):
@@ -131,9 +132,12 @@ def hideArticlesMarkedAsRead():
                 utils.getUrlOfArticle(fileName),
                 utils.getAbsPath("../storage/markedAsReadArticles.txt"),
             )
-            hide_file_with_name(fileName)
         except Exception as e:
             logger.error(f"Failed to mark {fileName} as read: {e}")
+        try:
+            hide_file_with_name(fileName)
+        except Exception as e:
+            logger.error(f"Failed to hide {fileName}: {e}")
     manageLists.deleteAllArticlesInList("_READ")
 
 
