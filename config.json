@@ -61,7 +61,7 @@
             "use_summary": true
         },
         "mech design": {
-            "description": "about novel incentive mechanism design ideas including anything related to public goods, cryptoeconomics, auctions, game theory, etc. not including documents about a specific defi protocol/product though, must be more about the idea/principles/mechanism/incentives itself.",
+            "description": "about novel incentive mechanism design ideas including anything related to public goods, novel institutions, cryptoeconomics, auctions, game theory, etc. not including documents about a specific defi protocol/product though, must be more about the idea/principles/mechanism/incentives itself.",
             "use_summary": true
         }
     },
