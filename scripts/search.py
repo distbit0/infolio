@@ -1,7 +1,12 @@
 import argparse
 import os
-from . import utils
-from . import manageLists
+import sys
+
+# Add the project root to the path to import from src
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import src.utils as utils
+import src.manageLists as manageLists
 from loguru import logger
 
 
@@ -50,9 +55,9 @@ def main():
     args = getCMDArguments()
     subjectList = [args.subject] if args.subject else []
 
-    ## articles = utils.getArticleUrls(
-    ##     subjectList, readState="", formats=["html", "pdf", "mhtml"]
-    ## )
+    # Note: The query argument is currently not used for actual searching
+    # This would need to be implemented to do actual Boolean searching
+    articles = utils.getArticleUrls(subjectList, readState="")
 
     articleUrls = [url for url in articles.values() if url]
     articlePaths = list(articles.keys())
