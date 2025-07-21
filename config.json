@@ -5,7 +5,7 @@
     "backupFolderPath": "/home/pimania/miscSyncs/ebooksBackup/",
     "convertLinksDir": "/home/pimania/dev/convertLinks",
     "maxSummariesPerSession": 300,
-    "maxArticlesToTagPerSession": 4000,
+    "maxArticlesToTagPerSession": 20000,
     "droidEbooksFolderPath": "/storage/emulated/0/ebooks/",
     "summary_in_max_words": 8000,
     "enable_article_summarization": true,
