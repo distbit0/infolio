@@ -56,7 +56,7 @@
             "description": "about any of the following:\nprediction markets\ninformation markets\nidea markets\nfutarchy\nintelligence marketplaces\ninformation elicitation incentive mechanisms to improve human cognition, improve decision making or improve information quality\napplications of ai agents to crypto\nnovell crypto capital allocation mechanisms\ngovernance incentives",
             "use_summary": true
         },
-        "epistech": {
+        "epistemic tech": {
             "description": "about using technology to improve epistemics, decision making, knowledge acquisition, truth discovery etc. e.g. via knowledge graphs, incentives or any other mechanism. not including mathematical ML journal papers",
             "use_summary": true
         },
@@ -78,7 +78,7 @@
                 "infofi"
             ]
         },
-        "epistech": {
+        "epistemic tech": {
             "formats": [
                 "epub",
                 "mobi",
@@ -87,7 +87,7 @@
             ],
             "all_tags": [],
             "any_tags": [
-                "epistech"
+                "epistemic tech"
             ]
         },
         "mech design": {
