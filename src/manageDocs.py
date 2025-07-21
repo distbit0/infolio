@@ -24,7 +24,7 @@ def delete_file_with_name(file_name):
             matching_file = os.path.join(folder, fileName)
             homeDir = os.path.expanduser("~")
             dest = os.path.join(
-                homeDir, ".local/share/Trash/files/", "DEL_F_W_N_" + fileName
+                homeDir, ".local/share/Trash/files/", "DEL_FILE_W_NAME" + fileName
             )
             while os.path.exists(dest):
                 dest = dest + "_" + str(random.randint(0, 10000))

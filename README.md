@@ -1,8 +1,6 @@
 # Infolio (beta)
 
-
 Infolio uses AI to generate high-quality reading lists on specific topics from a large collection of documents. It achieves this by tagging articles according to each tag's description, then constructing reading lists which are defined by specifying a set of tags.
-
 
 
 ## Features

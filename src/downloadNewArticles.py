@@ -159,11 +159,11 @@ def save_mobile_article_as_mhtml(url, saveDirectory, timeout=10, min_load_time=5
     )
     if downloadAsHtml:
         fileExt = ".html"
-        logger.info(f"saving url: {url} as text")
+        logger.debug(f"saving url: {url} as text")
         htmlText, title = save_text_as_html(url)
     else:
         fileExt = ".mhtml"
-        logger.info(f"saving url: {url} as webpage")
+        logger.debug(f"saving url: {url} as webpage")
         htmlText, title = save_webpage_as_mhtml(url, timeout, min_load_time)
 
     file_path = os.path.join(saveDirectory, f"{title}{fileExt}")
