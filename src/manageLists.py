@@ -95,6 +95,7 @@ def getArticlesFromList(listName):
     # ------------------------------------------------------------------
     # 3. Merge conflict articles, rewrite, and delete conflicts
     # ------------------------------------------------------------------
+    articleFileFolder = utils.getConfig()["articleFileFolder"]
     if conflict_files:
         logger.info(f"Found {len(conflict_files)} conflict files for {listName}")
         for cfile in conflict_files:
@@ -103,7 +104,8 @@ def getArticlesFromList(listName):
                     _, conflictArticles = parse_article_lines(cf.read())
                 for art in conflictArticles:
                     if art not in mainArticles:
-                        mainArticles.append(art)
+                        if os.path.exists(os.path.join(articleFileFolder, art)):
+                            mainArticles.append(art)
             except Exception as e:
                 logger.error(f"Error reading conflict file {cfile}: {e}")
 
@@ -124,31 +126,7 @@ def getArticlesFromList(listName):
             logger.error(f"Error saving merged content to {listPath}: {e}")
 
     # ------------------------------------------------------------------
-    # 4. Prune articles whose underlying files have disappeared
-    # ------------------------------------------------------------------
-    articleFileFolder = utils.getConfig()["articleFileFolder"]
-    prunedArticles = []
-    for rel_path in mainArticles:
-        if os.path.exists(os.path.join(articleFileFolder, rel_path)):
-            prunedArticles.append(rel_path)
-        else:
-            logger.warning(f"Pruning missing article: {rel_path}")
-
-    if len(prunedArticles) != len(mainArticles):
-        mainArticles = prunedArticles
-        # keep the on‑disk list tidy
-        if mainHeader is not None:
-            clean_text = f"{mainHeader}\n:\n" + "\n".join(mainArticles)
-        else:
-            clean_text = "\n".join(os.path.join(rootPath, art) for art in mainArticles)
-        try:
-            with open(listPath, "w", encoding="utf-8") as f:
-                f.write(clean_text)
-        except Exception as e:
-            logger.error(f"Error rewriting pruned list {listPath}: {e}")
-
-    # ------------------------------------------------------------------
-    # 5. Done
+    # 4. Done
     # ------------------------------------------------------------------
     return mainArticles
 
