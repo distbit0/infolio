@@ -6,25 +6,41 @@ from loguru import logger
 
 def getArticlesFromList(listName):
     """
-    Returns a list of article filenames from the .rlst file named `listName`.
-    If listName starts with '_', then any Syncthing conflict files are merged in
-    (only their article lines) and subsequently removed.
+    Returns a list of *relative* article paths extracted from the `.rlst`
+    file named `listName`.
+
+    Behaviour overview
+    ------------------
+    1.  Reads the list file (quietly returns [] if it does not exist).
+    2.  Parses it into an optional **header** region and a list of article
+        paths (relative to `droidEbooksFolderPath`).
+    3.  If the list name starts with “_”, merges in any Syncthing
+        `*.sync‑conflict-*` versions, keeping their article lines and then
+        deleting the conflicts.
+    4.  **New:** removes any article whose *real* file has vanished from
+        `articleFileFolder`, and rewrites the list on disk if pruning
+        occurred so the file stays self‑healing.
+    5.  Returns the cleaned list of relative paths.
     """
 
+    # ------------------------------------------------------------------
+    # Resolve paths and bail out early if the list file is missing
+    # ------------------------------------------------------------------
     config_path = utils.getConfig()["atVoiceFolderPath"]
     listPath = os.path.join(config_path, ".config", listName + ".rlst")
-    rootPath = os.path.join(utils.getConfig()["droidEbooksFolderPath"])
+    rootPath = utils.getConfig()["droidEbooksFolderPath"]
 
     if not os.path.exists(listPath):
         return []
 
+    # ------------------------------------------------------------------
+    # Helper: parse header + article lines from a .rlst text blob
+    # ------------------------------------------------------------------
     def parse_article_lines(text):
         """
-        Given the full text of a .rlst file, return (header_text, article_list).
+        Returns (header_text | None, [article_relative_path, …])
 
-        - header_text is the lines up to the last occurrence of a "\n:" marker
-          (i.e., the "header" region). If no header is detected, returns None.
-        - article_list is the list of extracted article filenames.
+        `article_relative_path` is the path *relative to* droidEbooksFolderPath.
         """
         text = text.strip()
         if not text:
@@ -32,93 +48,73 @@ def getArticlesFromList(listName):
 
         lines = text.split("\n")
 
-        # Detect a header if there's a second line that starts with ":"
+        # Detect a header — the file has one when the second line starts with ":"
         if len(lines) > 1 and lines[1].startswith(":"):
-            # Everything up to the last "\n:" is considered the header
+            # Everything up to the *last* "\n:" belongs to the header
             parts = text.split("\n:")
-            # All parts except the last are the header
             header_text = "\n:".join(parts[:-1]).rstrip("\n")
-            # The last part is what comes after the final header marker
             tail = parts[-1].split("\n")
-            # tail[0] is the ":" line, so skip it
-            article_lines = tail[1:]
+            article_lines = tail[1:]  # skip the ":" marker
         else:
-            # No header found
             header_text = None
             article_lines = lines
 
-        # Extract article filenames from article_lines
         articles = []
         for line in article_lines:
             line = line.strip()
             if not line:
                 continue
-            # The first token (split by tab) holds the path
-            parts = line.split("\t")
-            if parts:
-                if parts[0]:
-                    filePathRelativeToRoot = os.path.relpath(parts[0], rootPath)
-                    if filePathRelativeToRoot not in articles:
-                        articles.append(filePathRelativeToRoot)
+            first_field = line.split("\t")[0]
+            if first_field:
+                rel_to_root = os.path.relpath(first_field, rootPath)
+                if rel_to_root not in articles:
+                    articles.append(rel_to_root)
 
         return header_text, articles
 
-    # -------------------------------------------------------
-    # 1. Read and parse main file
-    # -------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 1. Read and parse the main file
+    # ------------------------------------------------------------------
     with open(listPath, "r", encoding="utf-8") as f:
         mainText = f.read()
 
     mainHeader, mainArticles = parse_article_lines(mainText)
 
-    # -------------------------------------------------------
-    # 2. Check for conflict files only if listName starts with '_'
-    # -------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 2. Gather possible Syncthing conflict files (only for "_" lists)
+    # ------------------------------------------------------------------
     conflict_files = []
-    if listName.startswith("_"):
-        logger.info("looking for sync conflict files")
-        baseName = os.path.basename(listPath)
-        extension = os.path.splitext(baseName)[1]
-        fileName = os.path.splitext(baseName)[0]
-        dirName = os.path.dirname(listPath)
-        pattern = fileName + ".sync-conflict-*" + extension
-        conflict_path = os.path.join(dirName, pattern)
-        logger.info(f"Checking for conflict files in: {conflict_path}")
-        conflict_files = glob.glob(conflict_path)
+    # if listName.startswith("_"):
+    baseName = os.path.basename(listPath)
+    name_only = os.path.splitext(baseName)[0]
+    extension = os.path.splitext(baseName)[1]
+    dirName = os.path.dirname(listPath)
+    pattern = f"{name_only}.sync-conflict-*{extension}"
+    conflict_files = glob.glob(os.path.join(dirName, pattern))
 
-    # -------------------------------------------------------
-    # 3. Merge conflict articles (excluding their headers)
-    # -------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 3. Merge conflict articles, rewrite, and delete conflicts
+    # ------------------------------------------------------------------
     if conflict_files:
         logger.info(f"Found {len(conflict_files)} conflict files for {listName}")
         for cfile in conflict_files:
             try:
                 with open(cfile, "r", encoding="utf-8") as cf:
-                    ctext = cf.read()
-                # We only take the articles, ignoring conflict headers
-                _, conflictArticles = parse_article_lines(ctext)
-                for article in conflictArticles:
-                    if article not in mainArticles:
-                        mainArticles.append(article)
+                    _, conflictArticles = parse_article_lines(cf.read())
+                for art in conflictArticles:
+                    if art not in mainArticles:
+                        mainArticles.append(art)
             except Exception as e:
                 logger.error(f"Error reading conflict file {cfile}: {e}")
 
-        # -------------------------------------------------------
-        # 4. Rewrite the main file with the merged articles
-        # -------------------------------------------------------
+        # rewrite the merged list (header preserved if present)
         if mainHeader is not None:
-            newText = f"{mainHeader}\n:\n" + "\n".join(mainArticles)
+            merged_text = f"{mainHeader}\n:\n" + "\n".join(mainArticles)
         else:
-            articlesWithRoot = [
-                os.path.join(rootPath, article) for article in mainArticles
-            ]
-            newText = "\n".join(articlesWithRoot)
-
+            merged_text = "\n".join(os.path.join(rootPath, art) for art in mainArticles)
         try:
             with open(listPath, "w", encoding="utf-8") as f:
-                f.write(newText)
-
-            # Delete the conflicts
+                f.write(merged_text)
             for cfile in conflict_files:
                 try:
                     os.remove(cfile)
@@ -127,9 +123,33 @@ def getArticlesFromList(listName):
         except Exception as e:
             logger.error(f"Error saving merged content to {listPath}: {e}")
 
-    # -------------------------------------------------------
-    # 5. Return final article list
-    # -------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 4. Prune articles whose underlying files have disappeared
+    # ------------------------------------------------------------------
+    articleFileFolder = utils.getConfig()["articleFileFolder"]
+    prunedArticles = []
+    for rel_path in mainArticles:
+        if os.path.exists(os.path.join(articleFileFolder, rel_path)):
+            prunedArticles.append(rel_path)
+        else:
+            logger.warning(f"Pruning missing article: {rel_path}")
+
+    if len(prunedArticles) != len(mainArticles):
+        mainArticles = prunedArticles
+        # keep the on‑disk list tidy
+        if mainHeader is not None:
+            clean_text = f"{mainHeader}\n:\n" + "\n".join(mainArticles)
+        else:
+            clean_text = "\n".join(os.path.join(rootPath, art) for art in mainArticles)
+        try:
+            with open(listPath, "w", encoding="utf-8") as f:
+                f.write(clean_text)
+        except Exception as e:
+            logger.error(f"Error rewriting pruned list {listPath}: {e}")
+
+    # ------------------------------------------------------------------
+    # 5. Done
+    # ------------------------------------------------------------------
     return mainArticles
 
 
