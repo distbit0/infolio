@@ -59,7 +59,14 @@ def formatUrl(url):
     url = re.sub(r"\&gi=.*", r"", url)
     if "discord.com" in url:
         url = url.replace("#update", "")
+    # remove heading tags which cause false negative duplicate detection
     url = url.replace("###", "##")  # so that it isn't force refreshed in convertLinks
+    safeHeadings = []
+    hashtag = "#".join(url.split("#")[1:])
+    isAlNum = hashtag.replace("-", "").isalnum()
+    notSafe = hashtag not in safeHeadings
+    if "#" in url and isAlNum and notSafe:
+        url = url.split("#")[0]
     return url
 
 

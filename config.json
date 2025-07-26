@@ -53,7 +53,7 @@
     ],
     "article_tags": {
         "infofi": {
-            "description": "about any of the following:\nprediction markets\ninformation markets\nidea markets\nfutarchy\nintelligence marketplaces\ninformation elicitation incentive mechanisms to improve human cognition, improve decision making or improve information quality\napplications of ai agents to crypto\nnovell crypto capital allocation mechanisms\ngovernance incentives",
+            "description": "about any of :futarchy,prediction markets,information markets,idea markets,intelligence markets,information elicitation incentive mechanisms to improve decision making or improve information quality,applications of ai agents to crypto,novell crypto capital allocation mechanisms or governance incentives",
             "use_summary": true
         },
         "epistemic tech": {
@@ -61,7 +61,7 @@
             "use_summary": true
         },
         "mech design": {
-            "description": "about novel incentive mechanism design ideas including anything related to public goods, novel institutions, cryptoeconomics, auctions, game theory, etc. not including documents about a specific defi protocol/product though, must be more about the idea/principles/mechanism/incentives itself.",
+            "description": "about novel incentive mechanism design ideas including anything related to public goods, novel institutions, cryptoeconomics, auctions, game theory, etc. not including documents mostly focused on a specific defi project/product though, must be more about the idea/principles/mechanism/incentives itself.",
             "use_summary": true
         }
     },
