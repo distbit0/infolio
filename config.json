@@ -10,7 +10,7 @@
     "summary_in_max_words": 8000,
     "enable_article_summarization": true,
     "tag_batch_size": 1,
-    "llm_api_batch_size": 35,
+    "llm_api_batch_size": 60,
     "ai_model": "google/gemini-2.5-flash-lite-preview-06-17",
     "fileNamesToSkip": [
         "fileNamesAndHashes.txt",

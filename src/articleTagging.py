@@ -114,6 +114,7 @@ class TagEvaluator:
                     response_format={"type": "json_object"},
                 )
                 result_text = response.choices[0].message.content.strip()
+                result_text = result_text.replace("```json", "").replace("```", "")
                 result_json = json.loads(result_text)
 
                 # Map the result to the tag ID
