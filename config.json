@@ -52,21 +52,29 @@
         ","
     ],
     "article_tags": {
-        "infofi": {
-            "description": "about any of :futarchy,prediction markets,information markets,idea markets,intelligence markets,information elicitation incentive mechanisms to improve decision making or improve information quality,applications of ai agents to crypto,novell crypto capital allocation mechanisms or governance incentives",
+        "prediction markets": {
+            "description": "anything related to: futarchy, prediction markets, information markets, idea markets, idea futures or information elicitation incentive mechanisms",
+            "use_summary": true
+        },
+        "crypto ai & governance": {
+            "description": "anything related to: novel crypto capital allocation mechanisms or governance incentive mechanisms",
+            "use_summary": true
+        },
+        "decision theory": {
+            "description": "anything about decision theory such as functional decision theory, EDT, CDT, UDT, etc., newcomb's problem, blackmail, etc., or related topics and applications",
             "use_summary": true
         },
         "epistemic tech": {
-            "description": "about using technology to improve epistemics, decision making, knowledge acquisition, truth discovery etc. e.g. via knowledge graphs, incentives or any other mechanism. not including mathematical ML journal papers",
+            "description": "anything about using technology to improve epistemics, decision making, knowledge acquisition, truth discovery etc. e.g. via knowledge graphs, incentives or any other mechanism. not including mathematical ML journal papers",
             "use_summary": true
         },
         "mech design": {
-            "description": "about novel incentive mechanism design ideas including anything related to public goods, novel institutions, cryptoeconomics, auctions, game theory, etc. not including documents mostly focused on a specific defi project/product though, must be more about the idea/principles/mechanism/incentives itself.",
+            "description": "anything about novel incentive mechanism design ideas including anything related to public goods, novel institutions, cryptoeconomics, auctions, game theory, etc. not including documents mostly focused on a specific defi project/product though, must be more about the idea/principles/mechanism/incentives itself.",
             "use_summary": true
         }
     },
     "listToTagMappings": {
-        "infofi": {
+        "butter": {
             "all_tags": [],
             "formats": [
                 "epub",
@@ -75,7 +83,9 @@
                 "mhtml"
             ],
             "any_tags": [
-                "infofi"
+                "prediction markets",
+                "crypto ai & governance",
+                "decision theory"
             ]
         },
         "epistemic tech": {
