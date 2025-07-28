@@ -1,7 +1,7 @@
 [project]
 name = "infolio"
 version = "0.1.0"
-description = "Add your description here"
+description = "A tool for managing and organizing information"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
