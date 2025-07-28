@@ -10,7 +10,7 @@
     "summary_in_max_words": 8000,
     "enable_article_summarization": true,
     "tag_batch_size": 1,
-    "llm_api_batch_size": 60,
+    "llm_api_batch_size": 70,
     "ai_model": "google/gemini-2.5-flash-lite-preview-06-17",
     "fileNamesToSkip": [
         "fileNamesAndHashes.txt",
@@ -56,8 +56,8 @@
             "description": "anything related to: futarchy, prediction markets, information markets, idea markets, idea futures or information elicitation incentive mechanisms",
             "use_summary": true
         },
-        "crypto ai & governance": {
-            "description": "anything related to: novel crypto capital allocation mechanisms or governance incentive mechanisms",
+        "crypto capital allocation": {
+            "description": "anything related to: novel crypto capital allocation mechanisms",
             "use_summary": true
         },
         "decision theory": {
@@ -84,7 +84,7 @@
             ],
             "any_tags": [
                 "prediction markets",
-                "crypto ai & governance",
+                "crypto capital allocation",
                 "decision theory"
             ]
         },
