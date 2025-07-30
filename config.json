@@ -71,6 +71,10 @@
         "mech design": {
             "description": "anything about novel incentive mechanism design ideas including anything related to public goods, novel institutions, cryptoeconomics, auctions, game theory, etc. not including documents mostly focused on a specific defi project/product though, must be more about the idea/principles/mechanism/incentives itself.",
             "use_summary": true
+        },
+        "long tail margin": {
+            "description": "lending or margin trading mechanism designs optimised for long tail/low liquidity assets",
+            "use_summary": true
         }
     },
     "listToTagMappings": {
@@ -110,6 +114,12 @@
             "all_tags": [],
             "any_tags": [
                 "mech design"
+            ]
+        },
+        "lowCapMargin": {
+            "formats": [
+                "html",
+                "mhtml"
             ]
         }
     }
